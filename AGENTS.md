@@ -27,7 +27,7 @@ No test suite or lint script is configured yet. Add focused tests with new domai
 
 ## Coding Style & Naming Conventions
 
-Use two spaces in TypeScript/TSX and follow the existing double-quote style. Use `PascalCase` for React components, `camelCase` for functions and variables, and filenames such as `BudgetSummary.tsx`. Use `cargo fmt`; name Rust modules and files in `snake_case`. Keep money as integer minor units with an explicit currency code; never use floating-point values for financial calculations.
+Use two spaces in TypeScript/TSX and follow the existing double-quote style. Use `PascalCase` for React components, `camelCase` for functions and variables, and filenames such as `BudgetSummary.tsx`. Use `cargo fmt`; name Rust modules and files in `snake_case`. Keep money as integer minor units with an explicit currency code; never use floating-point values for financial calculations. Ensure each variable, function, component, or complex logic segment includes an explanatory comment. Keep all code files under approximately 800 lines, and ensure each file does not mix functionality.
 
 ## Testing Guidelines
 
