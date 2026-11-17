@@ -31,8 +31,8 @@ npm run audit
 production Vite build. Run `npm run format` to apply the frontend formatting
 rules. `npm run audit` checks shipped dependencies, while `npm run audit:all`
 also checks development tooling. CI also runs RustSec's advisory audit; install
-`cargo-audit` locally and run `cargo audit --manifest-path src-tauri/Cargo.toml`
-when performing a Rust dependency review.
+`cargo-audit` locally and run `cargo audit --file src-tauri/Cargo.lock` when
+performing a Rust dependency review.
 
 ## Recommended IDE Setup
 
