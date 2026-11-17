@@ -1,0 +1,65 @@
+name: Continuous integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Verify frontend formatting, linting, and build
+        run: npm run check
+      - name: Audit production frontend dependencies
+        run: npm run audit
+
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: rustfmt, clippy
+      - name: Verify Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - name: Lint Rust
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Check Rust compilation
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+
+  rust-advisories:
+    name: Rust advisory audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Rust advisories
+        uses: rustsec/audit-check@v2.0.0
