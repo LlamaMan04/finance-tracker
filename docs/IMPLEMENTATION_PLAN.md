@@ -52,7 +52,7 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 2. [x] Audit the starter project and pin the initial Rust and Node toolchain versions. Configure TypeScript strictness, Rust formatting, frontend formatting/linting, dependency audit commands, and CI jobs for frontend build, Rust check/test, and dependency review.
 3. [x] Define the application error contract: machine-readable error codes for validation, not-found, conflict, locked, unauthorized, backup, and internal failures; map safe messages to the UI and keep diagnostic detail redacted.
 4. [x] Create Rust domain primitives: `Money` (minor units plus currency), validated IDs, date/period types, currency validation, and a profile scope. Add unit tests for arithmetic, currency mismatch, overflow boundaries, sign conventions, and rounding policy.
-5. [~] Define repository ports for profile/security state, budgets, categories, accounts, transactions, allocations, and backup operations. The repository ports and a session-service contract exist; the complete application-service surface and frontend DTOs remain to be defined.
+5. [x] Define repository ports for profile/security state, budgets, categories, accounts, transactions, allocations, and backup operations. The repository ports, application-service contracts, safe Rust/frontend DTOs, and profile command-input validation boundary are defined; concrete profile behavior remains Phase 2 work.
 6. [x] Set up SQLite connection lifecycle, migration runner, migration tracking table, transactional repository conventions, and temporary-database test helpers. Add only the minimal bootstrap schema needed to open an empty application safely.
 7. [x] Run the security decision spike from the project plan: SQLCipher whole-database encryption is selected and proven on the committed Windows target; Argon2id parameters, salt/key-version metadata, locked startup, credential-store feasibility, failure modes, and portability requirements are recorded in `SECURITY_ARCHITECTURE.md`.
 8. [x] Configure a minimal Tauri capability allowlist. Keep filesystem, shell, network, and plugin permissions absent unless a later, reviewed use case requires them.
@@ -61,7 +61,7 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 
 - [x] Documented platform/toolchain support policy and local development setup.
 - [x] CI baseline, formatting configuration, and dependency-audit workflow.
-- [~] Compiling layered Rust skeleton with domain primitives, ports, migration runner, command/error conventions, and test helpers. Domain primitives, ports, command/error conventions, and SQLite migration/test infrastructure are present; the complete application-service surface and frontend DTOs remain.
+- [x] Compiling layered Rust skeleton with domain primitives, ports, migration runner, command/error conventions, and test helpers. Domain primitives, ports, application-service contracts, Rust/frontend DTOs, command-error conventions, and SQLite migration/test infrastructure are present.
 - [x] Written security architecture decision covering encryption, KDF parameters, key lifecycle, keychain use, failure modes, and upgrade path.
 
 ### Acceptance criteria

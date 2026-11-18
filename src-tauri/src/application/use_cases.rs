@@ -1,0 +1,219 @@
+//! Application-service contracts that keep future finance workflows independent of Tauri and SQL.
+
+use crate::application::ApplicationError;
+use crate::application::contracts::{
+    AccountDto, AllocationDto, BackupDto, BudgetDto, CategoryDto, SessionStatusDto, TransactionDto,
+};
+use crate::domain::{
+    AccountId, AllocationId, BackupId, BudgetId, CategoryId, ProfileScope, TransactionId,
+};
+use zeroize::Zeroizing;
+
+/// Defines profile lifecycle operations without exposing passphrases or keys in responses.
+pub trait ProfileService {
+    /// Returns the selected profile's safe lock state.
+    fn session_status(&self) -> Result<SessionStatusDto, ApplicationError>;
+
+    /// Creates a protected profile after the command boundary has validated setup input.
+    fn create_profile(
+        &self,
+        request: CreateProfileRequest,
+    ) -> Result<SessionStatusDto, ApplicationError>;
+
+    /// Unlocks a profile after the command boundary has validated unlock input.
+    fn unlock_profile(
+        &self,
+        request: UnlockProfileRequest,
+    ) -> Result<SessionStatusDto, ApplicationError>;
+
+    /// Drops the active protected session and its in-memory key material.
+    fn lock(&self) -> Result<(), ApplicationError>;
+}
+
+/// Defines budget operations that will be implemented after secure sessions exist.
+pub trait BudgetService {
+    /// Creates one budget within the authenticated profile scope.
+    fn create(
+        &self,
+        scope: &ProfileScope,
+        request: CreateBudgetRequest,
+    ) -> Result<BudgetDto, ApplicationError>;
+
+    /// Archives a budget while retaining its historical records.
+    fn archive(&self, scope: &ProfileScope, budget_id: &BudgetId) -> Result<(), ApplicationError>;
+}
+
+/// Defines category operations that will be implemented after secure sessions exist.
+pub trait CategoryService {
+    /// Creates one category within the authenticated profile scope.
+    fn create(
+        &self,
+        scope: &ProfileScope,
+        request: CreateCategoryRequest,
+    ) -> Result<CategoryDto, ApplicationError>;
+
+    /// Archives a category while retaining its historical records.
+    fn archive(
+        &self,
+        scope: &ProfileScope,
+        category_id: &CategoryId,
+    ) -> Result<(), ApplicationError>;
+}
+
+/// Defines account operations that will be implemented after secure sessions exist.
+pub trait AccountService {
+    /// Creates one account within the authenticated profile scope.
+    fn create(
+        &self,
+        scope: &ProfileScope,
+        request: CreateAccountRequest,
+    ) -> Result<AccountDto, ApplicationError>;
+
+    /// Archives an account while retaining its historical records.
+    fn archive(&self, scope: &ProfileScope, account_id: &AccountId)
+    -> Result<(), ApplicationError>;
+}
+
+/// Defines ledger operations that will be implemented after secure sessions exist.
+pub trait TransactionService {
+    /// Records a normalized income or expense entry in the authenticated profile scope.
+    fn create(
+        &self,
+        scope: &ProfileScope,
+        request: CreateTransactionRequest,
+    ) -> Result<TransactionDto, ApplicationError>;
+
+    /// Records one atomic transfer represented by the returned linked entries.
+    fn create_transfer(
+        &self,
+        scope: &ProfileScope,
+        request: CreateTransferRequest,
+    ) -> Result<(TransactionDto, TransactionDto), ApplicationError>;
+
+    /// Reverses an applicable entry without silently rewriting financial history.
+    fn reverse(
+        &self,
+        scope: &ProfileScope,
+        transaction_id: &TransactionId,
+    ) -> Result<TransactionDto, ApplicationError>;
+}
+
+/// Defines allocation operations that will be implemented after secure sessions exist.
+pub trait AllocationService {
+    /// Records an allocation within the authenticated profile scope.
+    fn create(
+        &self,
+        scope: &ProfileScope,
+        request: CreateAllocationRequest,
+    ) -> Result<AllocationDto, ApplicationError>;
+
+    /// Removes an allocation only where its future workflow permits it.
+    fn remove(
+        &self,
+        scope: &ProfileScope,
+        allocation_id: &AllocationId,
+    ) -> Result<(), ApplicationError>;
+}
+
+/// Defines encrypted backup operations without exposing filesystem or cryptographic details to callers.
+pub trait BackupService {
+    /// Creates an authenticated encrypted backup for the authenticated profile scope.
+    fn export(&self, scope: &ProfileScope) -> Result<BackupDto, ApplicationError>;
+
+    /// Restores an already-validated encrypted backup under an explicit restore policy.
+    fn restore(
+        &self,
+        scope: &ProfileScope,
+        backup_id: &BackupId,
+        policy: RestorePolicy,
+    ) -> Result<(), ApplicationError>;
+}
+
+/// Holds validated profile-creation input until the profile service consumes it.
+pub struct CreateProfileRequest {
+    /// Holds the caller-selected profile identifier.
+    pub profile_id: String,
+    /// Holds the passphrase only during the setup operation.
+    pub passphrase: Zeroizing<Vec<u8>>,
+}
+
+/// Holds validated profile-unlock input until the profile service consumes it.
+pub struct UnlockProfileRequest {
+    /// Holds the requested profile identifier.
+    pub profile_id: String,
+    /// Holds the passphrase only during the unlock operation.
+    pub passphrase: Zeroizing<Vec<u8>>,
+}
+
+/// Holds the user-entered fields required to create a budget.
+pub struct CreateBudgetRequest {
+    /// Holds the intended display name.
+    pub name: String,
+    /// Holds the intended ISO-style currency code.
+    pub currency: String,
+}
+
+/// Holds the user-entered fields required to create a category.
+pub struct CreateCategoryRequest {
+    /// Holds the intended display name.
+    pub name: String,
+    /// Holds the optional presentation color.
+    pub color: Option<String>,
+}
+
+/// Holds the user-entered fields required to create an account.
+pub struct CreateAccountRequest {
+    /// Holds the intended display name.
+    pub name: String,
+    /// Holds the intended ISO-style currency code.
+    pub currency: String,
+    /// Holds the exact opening balance in minor units.
+    pub opening_minor_units: i64,
+}
+
+/// Holds the user-entered fields required to record income or an expense.
+pub struct CreateTransactionRequest {
+    /// Holds the affected account identifier.
+    pub account_id: String,
+    /// Holds the optional budget category identifier.
+    pub category_id: Option<String>,
+    /// Holds the exact signed amount in minor units.
+    pub minor_units: i64,
+    /// Holds the accompanying ISO-style currency code.
+    pub currency: String,
+    /// Holds the canonical local transaction date.
+    pub occurred_on: String,
+}
+
+/// Holds the user-entered fields required to record a transfer atomically.
+pub struct CreateTransferRequest {
+    /// Holds the source account identifier.
+    pub source_account_id: String,
+    /// Holds the destination account identifier.
+    pub destination_account_id: String,
+    /// Holds the positive transfer amount in minor units.
+    pub minor_units: i64,
+    /// Holds the accompanying ISO-style currency code.
+    pub currency: String,
+    /// Holds the canonical local transfer date.
+    pub occurred_on: String,
+}
+
+/// Holds the user-entered fields required to allocate a transaction amount.
+pub struct CreateAllocationRequest {
+    /// Holds the owning transaction identifier.
+    pub transaction_id: String,
+    /// Holds the destination category identifier.
+    pub category_id: String,
+    /// Holds the exact allocation amount in minor units.
+    pub minor_units: i64,
+}
+
+/// Selects whether a future restore replaces or merges compatible data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RestorePolicy {
+    /// Replaces the active profile data after backup validation and snapshot safeguards.
+    Replace,
+    /// Merges compatible backup records after conflict validation.
+    Merge,
+}

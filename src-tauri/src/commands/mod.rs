@@ -1,5 +1,7 @@
 //! Tauri-boundary types. Commands are added only when a reviewed use case exists.
 
+pub mod profile;
+
 use crate::application::ApplicationError;
 use crate::ports::frontend::{FrontendErrorPort, SafeFrontendErrorMapper};
 
