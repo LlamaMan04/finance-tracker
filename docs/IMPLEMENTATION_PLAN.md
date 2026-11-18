@@ -53,7 +53,7 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 3. [x] Define the application error contract: machine-readable error codes for validation, not-found, conflict, locked, unauthorized, backup, and internal failures; map safe messages to the UI and keep diagnostic detail redacted.
 4. [x] Create Rust domain primitives: `Money` (minor units plus currency), validated IDs, date/period types, currency validation, and a profile scope. Add unit tests for arithmetic, currency mismatch, overflow boundaries, sign conventions, and rounding policy.
 5. [~] Define repository ports for profile/security state, budgets, categories, accounts, transactions, allocations, and backup operations. The repository ports and a session-service contract exist; the complete application-service surface and frontend DTOs remain to be defined.
-6. [ ] Set up SQLite connection lifecycle, migration runner, migration tracking table, transactional repository conventions, and temporary-database test helpers. Add only the minimal bootstrap schema needed to open an empty application safely.
+6. [x] Set up SQLite connection lifecycle, migration runner, migration tracking table, transactional repository conventions, and temporary-database test helpers. Add only the minimal bootstrap schema needed to open an empty application safely.
 7. [ ] Run the security decision spike from the project plan: validate the selected encrypted-SQLite or application-level encryption approach, Argon2id configuration calibration, salt/key-version storage, and OS credential-store feasibility on every supported platform.
 8. [x] Configure a minimal Tauri capability allowlist. Keep filesystem, shell, network, and plugin permissions absent unless a later, reviewed use case requires them.
 
@@ -61,14 +61,14 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 
 - [x] Documented platform/toolchain support policy and local development setup.
 - [x] CI baseline, formatting configuration, and dependency-audit workflow.
-- [~] Compiling layered Rust skeleton with domain primitives, ports, migration runner, command/error conventions, and test helpers. Domain primitives, ports, and command/error conventions are present; migration and database test infrastructure remain.
+- [~] Compiling layered Rust skeleton with domain primitives, ports, migration runner, command/error conventions, and test helpers. Domain primitives, ports, command/error conventions, and SQLite migration/test infrastructure are present; the complete application-service surface and frontend DTOs remain.
 - [ ] Written security architecture decision covering encryption, KDF parameters, key lifecycle, keychain use, failure modes, and upgrade path.
 
 ### Acceptance criteria
 
 - [x] A clean checkout builds the TypeScript app and passes `cargo check` without requiring financial data or network access at runtime.
 - [x] Domain tests prove no floating-point money path is used and invalid/cross-currency operations fail safely.
-- [ ] A fresh database is created and migrated transactionally; rerunning migrations is idempotent.
+- [x] A fresh database is created and migrated transactionally; rerunning migrations is idempotent.
 - [x] The Tauri capability manifest exposes only commands needed by the bootstrap application.
 - [ ] The chosen protection-at-rest approach has been proven in a small end-to-end spike before profile data is implemented.
 
