@@ -29,6 +29,15 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run audit
 ```
 
+The Rust build compiles and statically links the bundled SQLCipher and OpenSSL sources. A native
+C compiler and a complete Perl distribution are therefore required; use Strawberry Perl on
+Windows rather than Git for Windows' minimal Perl. To measure the versioned Argon2id profile on
+release candidate hardware, run:
+
+```powershell
+cargo run --release --manifest-path src-tauri/Cargo.toml --example calibrate_argon2
+```
+
 `npm run check` verifies frontend formatting, linting, TypeScript, and the
 production Vite build. Run `npm run format` to apply the frontend formatting
 rules. `npm run audit` checks shipped dependencies, while `npm run audit:all`

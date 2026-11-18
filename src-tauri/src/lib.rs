@@ -3,15 +3,16 @@ pub mod commands;
 pub mod domain;
 pub mod infrastructure;
 pub mod ports;
+pub mod security;
 
 use crate::application::ApplicationError;
-use crate::infrastructure::database::Database;
+use crate::infrastructure::database::ProtectedDatabaseLocation;
 use std::error::Error;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // The bootstrap app owns the local database; no database APIs are exposed to the frontend.
+    // Startup retains only the approved path; Phase 2 authentication must unlock the database.
     tauri::Builder::default()
         .setup(|app| {
             let database_path = app
@@ -19,10 +20,8 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|_| Box::<dyn Error>::from(ApplicationError::internal()))?
                 .join("finance-tracker.sqlite3");
-            let database = Database::open(&database_path)
-                .map_err(|_| Box::<dyn Error>::from(ApplicationError::internal()))?;
 
-            app.manage(database);
+            app.manage(ProtectedDatabaseLocation::new(database_path));
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -1,0 +1,3 @@
+[target.x86_64-pc-windows-msvc]
+# Vendored OpenSSL omits static-library PDBs; ignore only that non-functional linker diagnostic.
+rustflags = ["-C", "link-arg=/IGNORE:4099"]

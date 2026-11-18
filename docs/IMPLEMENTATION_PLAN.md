@@ -54,7 +54,7 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 4. [x] Create Rust domain primitives: `Money` (minor units plus currency), validated IDs, date/period types, currency validation, and a profile scope. Add unit tests for arithmetic, currency mismatch, overflow boundaries, sign conventions, and rounding policy.
 5. [~] Define repository ports for profile/security state, budgets, categories, accounts, transactions, allocations, and backup operations. The repository ports and a session-service contract exist; the complete application-service surface and frontend DTOs remain to be defined.
 6. [x] Set up SQLite connection lifecycle, migration runner, migration tracking table, transactional repository conventions, and temporary-database test helpers. Add only the minimal bootstrap schema needed to open an empty application safely.
-7. [ ] Run the security decision spike from the project plan: validate the selected encrypted-SQLite or application-level encryption approach, Argon2id configuration calibration, salt/key-version storage, and OS credential-store feasibility on every supported platform.
+7. [x] Run the security decision spike from the project plan: SQLCipher whole-database encryption is selected and proven on the committed Windows target; Argon2id parameters, salt/key-version metadata, locked startup, credential-store feasibility, failure modes, and portability requirements are recorded in `SECURITY_ARCHITECTURE.md`.
 8. [x] Configure a minimal Tauri capability allowlist. Keep filesystem, shell, network, and plugin permissions absent unless a later, reviewed use case requires them.
 
 ### Deliverables
@@ -62,7 +62,7 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 - [x] Documented platform/toolchain support policy and local development setup.
 - [x] CI baseline, formatting configuration, and dependency-audit workflow.
 - [~] Compiling layered Rust skeleton with domain primitives, ports, migration runner, command/error conventions, and test helpers. Domain primitives, ports, command/error conventions, and SQLite migration/test infrastructure are present; the complete application-service surface and frontend DTOs remain.
-- [ ] Written security architecture decision covering encryption, KDF parameters, key lifecycle, keychain use, failure modes, and upgrade path.
+- [x] Written security architecture decision covering encryption, KDF parameters, key lifecycle, keychain use, failure modes, and upgrade path.
 
 ### Acceptance criteria
 
@@ -70,7 +70,7 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 - [x] Domain tests prove no floating-point money path is used and invalid/cross-currency operations fail safely.
 - [x] A fresh database is created and migrated transactionally; rerunning migrations is idempotent.
 - [x] The Tauri capability manifest exposes only commands needed by the bootstrap application.
-- [ ] The chosen protection-at-rest approach has been proven in a small end-to-end spike before profile data is implemented.
+- [x] The chosen protection-at-rest approach has been proven in a small end-to-end spike before profile data is implemented.
 
 ## Phase 2 — Secure local profile
 
