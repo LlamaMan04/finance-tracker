@@ -8,10 +8,12 @@ use crate::infrastructure::database::Database;
 use crate::infrastructure::profile_metadata::{ProfileMetadataStore, StoredProfileMetadata};
 use crate::ports::security::{DatabaseKey, KeyDerivationPort};
 use crate::security::Argon2idKeyDeriver;
+use crate::security::unlock_throttle::UnlockThrottle;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Instant;
 
 /// Owns all sensitive material and the protected connection for one unlocked session.
 struct UnlockedSession {
@@ -26,6 +28,7 @@ pub struct LocalProfileService {
     metadata_store: ProfileMetadataStore,
     key_deriver: Argon2idKeyDeriver,
     session: Mutex<Option<UnlockedSession>>,
+    unlock_throttle: Mutex<UnlockThrottle>,
 }
 
 impl LocalProfileService {
@@ -36,6 +39,7 @@ impl LocalProfileService {
             metadata_store: ProfileMetadataStore::new(metadata_path),
             key_deriver: Argon2idKeyDeriver,
             session: Mutex::new(None),
+            unlock_throttle: Mutex::new(UnlockThrottle::new()),
         }
     }
 
@@ -57,6 +61,26 @@ impl LocalProfileService {
         }
 
         Ok(())
+    }
+
+    /// Opens one authenticated session while keeping every failure detail inside the Rust boundary.
+    fn open_unlocked_session(
+        &self,
+        request: &UnlockProfileRequest,
+    ) -> Result<UnlockedSession, ApplicationError> {
+        let stored = self.metadata_store.load()?.ok_or_else(ApplicationError::unauthorized)?;
+        if stored.profile_id != request.profile_id {
+            return Err(ApplicationError::unauthorized());
+        }
+
+        let profile_id =
+            ProfileId::parse(&stored.profile_id).map_err(|_| ApplicationError::unauthorized())?;
+        let database_key = self
+            .key_deriver
+            .derive_database_key(request.passphrase.as_slice(), &stored.encryption)?;
+        let database = Database::open(&self.database_path, &database_key)?;
+
+        Ok(UnlockedSession { profile_id, _database_key: database_key, _database: database })
     }
 }
 
@@ -136,21 +160,21 @@ impl ProfileService for LocalProfileService {
             return Ok(Self::unlocked_status(active_session));
         }
 
-        let stored = self.metadata_store.load()?.ok_or_else(ApplicationError::unauthorized)?;
-        if stored.profile_id != request.profile_id {
+        let now = Instant::now();
+        let mut throttle = self.unlock_throttle.lock().map_err(|_| ApplicationError::internal())?;
+        if throttle.is_blocked_at(now) {
             return Err(ApplicationError::unauthorized());
         }
 
-        let profile_id =
-            ProfileId::parse(&stored.profile_id).map_err(|_| ApplicationError::conflict())?;
-        let database_key = self
-            .key_deriver
-            .derive_database_key(request.passphrase.as_slice(), &stored.encryption)?;
-        let database = Database::open(&self.database_path, &database_key)
-            .map_err(|_| ApplicationError::unauthorized())?;
-        let active_session =
-            UnlockedSession { profile_id, _database_key: database_key, _database: database };
+        let active_session = match self.open_unlocked_session(&request) {
+            Ok(active_session) => active_session,
+            Err(_) => {
+                throttle.record_failure_at(now);
+                return Err(ApplicationError::unauthorized());
+            }
+        };
         let status = Self::unlocked_status(&active_session);
+        throttle.reset();
         *session = Some(active_session);
 
         Ok(status)
@@ -172,6 +196,7 @@ mod tests {
     use crate::application::use_cases::{
         CreateProfileRequest, ProfileService, UnlockProfileRequest,
     };
+    use std::fs;
     use zeroize::Zeroizing;
 
     /// Builds a temporary directory whose profile files cannot affect another test.
@@ -236,6 +261,46 @@ mod tests {
 
         assert_eq!(error.code, ErrorCode::Unauthorized);
         assert!(service.session_status().expect("status remains available").is_locked);
+    }
+
+    /// Proves malformed public metadata reveals no more than a wrong passphrase would.
+    #[test]
+    fn normalizes_corrupt_metadata_to_a_generic_unlock_failure() {
+        let directory = test_directory();
+        let service = service_for(&directory);
+        service.create_profile(create_request()).expect("profile is created");
+        service.lock().expect("profile locks");
+        fs::write(directory.path().join("finance-tracker.profile.json"), b"not-json")
+            .expect("metadata fixture is corrupted");
+
+        let error = service
+            .unlock_profile(UnlockProfileRequest {
+                profile_id: "primary-profile".to_owned(),
+                passphrase: Zeroizing::new(b"correct horse battery staple".to_vec()),
+            })
+            .expect_err("corrupt metadata is not disclosed");
+
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+    }
+
+    /// Proves a missing protected database has the same safe response as a wrong passphrase.
+    #[test]
+    fn normalizes_missing_database_to_a_generic_unlock_failure() {
+        let directory = test_directory();
+        let service = service_for(&directory);
+        service.create_profile(create_request()).expect("profile is created");
+        service.lock().expect("profile locks");
+        fs::remove_file(directory.path().join("finance-tracker.sqlite3"))
+            .expect("database fixture is removed");
+
+        let error = service
+            .unlock_profile(UnlockProfileRequest {
+                profile_id: "primary-profile".to_owned(),
+                passphrase: Zeroizing::new(b"correct horse battery staple".to_vec()),
+            })
+            .expect_err("missing database is not disclosed");
+
+        assert_eq!(error.code, ErrorCode::Unauthorized);
     }
 
     /// Proves a second setup cannot replace an existing encrypted profile.
