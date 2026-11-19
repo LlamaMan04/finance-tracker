@@ -2,9 +2,13 @@
 
 use crate::application::ApplicationError;
 use crate::application::contracts::SessionStatusDto;
+use crate::application::use_cases::ProfileService;
 use crate::application::use_cases::{CreateProfileRequest, UnlockProfileRequest};
+use crate::commands::safe_error;
 use crate::domain::ProfileId;
+use crate::security::LocalProfileService;
 use serde::Deserialize;
+use tauri::State;
 use zeroize::Zeroizing;
 
 /// Accepts the untrusted fields supplied to the future create-profile command.
@@ -87,6 +91,42 @@ fn validate_non_empty_passphrase(value: &str) -> Result<(), ApplicationError> {
 /// Supplies the safe locked state used by the future status command before any profile is active.
 pub fn locked_session_status() -> SessionStatusDto {
     SessionStatusDto { profile_id: None, is_locked: true }
+}
+
+/// Returns setup, locked, or unlocked state without opening protected data.
+#[tauri::command]
+pub fn get_session_status(
+    service: State<'_, LocalProfileService>,
+) -> Result<SessionStatusDto, ApplicationError> {
+    service.session_status().map_err(safe_error)
+}
+
+/// Validates first-run input before creating an encrypted local profile.
+#[tauri::command]
+pub fn create_profile(
+    service: State<'_, LocalProfileService>,
+    request: CreateProfileCommandInput,
+) -> Result<SessionStatusDto, ApplicationError> {
+    let validated_request = request.into_request().map_err(safe_error)?;
+
+    service.create_profile(validated_request).map_err(safe_error)
+}
+
+/// Validates unlock input before any protected database is opened.
+#[tauri::command]
+pub fn unlock_profile(
+    service: State<'_, LocalProfileService>,
+    request: UnlockProfileCommandInput,
+) -> Result<SessionStatusDto, ApplicationError> {
+    let validated_request = request.into_request().map_err(safe_error)?;
+
+    service.unlock_profile(validated_request).map_err(safe_error)
+}
+
+/// Explicitly tears down the active protected session.
+#[tauri::command]
+pub fn lock_profile(service: State<'_, LocalProfileService>) -> Result<(), ApplicationError> {
+    service.lock().map_err(safe_error)
 }
 
 #[cfg(test)]

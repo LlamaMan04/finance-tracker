@@ -80,13 +80,15 @@ Make protected local data usable only inside an authenticated, short-lived appli
 
 ### Work breakdown
 
-1. Implement first-run profile creation: profile metadata, passphrase confirmation, unique KDF salt, encryption/key version, and clear recovery limitations. Never persist the passphrase or derived key in preferences, logs, or ordinary database fields.
-2. Implement key derivation with Argon2id using the Phase 1-reviewed parameters. Wrap or reference key material through the OS credential store where available, while retaining passphrase-based authorization as the primary protection.
-3. Build a session service that owns unlocked key material, enforces profile scope, exposes lock state, clears sensitive memory where practical, and prevents repositories from opening protected data while locked.
-4. Add unlock throttling with progressively increasing delays, generic unlock errors, and safe behavior for corrupt/missing profile metadata or unavailable keychain entries.
-5. Implement explicit lock, application-start locked state, configurable inactivity timeout, and background/blur locking where the platform can support it reliably. Ensure pending forms and sensitive UI state are cleared or redacted on lock.
-6. Expose only profile setup, unlock, lock, and session-status commands. Validate all input in Rust and return safe error codes to a minimal React first-run/unlock shell.
-7. Add security-focused tests: wrong passphrase, rate limiting, lock transition, timeout, locked-command rejection, profile isolation, KDF/version migration behavior, corrupted ciphertext/metadata handling, and log redaction.
+Status: `[x]` complete, `[~]` partial, `[ ]` not started.
+
+1. [x] Implement first-run profile creation: profile metadata, passphrase confirmation, unique KDF salt, encryption/key version, and clear recovery limitations. Never persist the passphrase or derived key in preferences, logs, or ordinary database fields.
+2. [~] Implement key derivation with Argon2id using the Phase 1-reviewed parameters. Wrap or reference key material through the OS credential store where available, while retaining passphrase-based authorization as the primary protection. Argon2id derivation and versioned metadata are implemented; optional credential-store integration remains.
+3. [~] Build a session service that owns unlocked key material, enforces profile scope, exposes lock state, clears sensitive memory where practical, and prevents repositories from opening protected data while locked. The local session owns the zeroizing key and protected connection; repository authorization integration remains for later finance commands.
+4. [ ] Add unlock throttling with progressively increasing delays, generic unlock errors, and safe behavior for corrupt/missing profile metadata or unavailable keychain entries.
+5. [~] Implement explicit lock, application-start locked state, configurable inactivity timeout, and background/blur locking where the platform can support it reliably. Ensure pending forms and sensitive UI state are cleared or redacted on lock. Explicit lock and locked startup are implemented; timeout and background locking remain.
+6. [x] Expose only profile setup, unlock, lock, and session-status commands. Validate all input in Rust and return safe error codes to a minimal React first-run/unlock shell.
+7. [~] Add security-focused tests: wrong passphrase, rate limiting, lock transition, timeout, locked-command rejection, profile isolation, KDF/version migration behavior, corrupted ciphertext/metadata handling, and log redaction. Creation/reopen, wrong-passphrase, lock-transition, duplicate-profile, KDF/version, and ciphertext tests are present; the remaining policy tests follow the corresponding services.
 
 ### Deliverables
 

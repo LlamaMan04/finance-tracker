@@ -2,6 +2,7 @@
 
 pub mod database;
 mod migrations;
+pub mod profile_metadata;
 
 #[cfg(test)]
 pub(crate) mod test_support;

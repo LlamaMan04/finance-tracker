@@ -7,30 +7,13 @@ use crate::ports::security::DatabaseKey;
 use rusqlite::{Connection, OpenFlags, Transaction};
 use std::fs;
 use std::os::raw::c_int;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
 /// SQLCipher raw keys use the byte form `x'` + 64 hexadecimal digits + `'`.
 const SQLCIPHER_RAW_KEY_LENGTH: usize = 67;
-
-/// Retains the approved application-data path without opening protected data while locked.
-pub struct ProtectedDatabaseLocation {
-    path: PathBuf,
-}
-
-impl ProtectedDatabaseLocation {
-    /// Creates a location value that is safe to manage before authentication.
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-
-    /// Returns the path for the authenticated database-opening service.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-}
 
 /// Owns the single synchronized SQLite connection used by the local application.
 pub struct Database {
@@ -110,6 +93,11 @@ fn apply_database_key(connection: &Connection, key: &DatabaseKey) -> DatabaseRes
         return Err(ApplicationError::unauthorized());
     }
 
+    // Disable native SQLCipher diagnostics before key validation so wrong-key details never reach
+    // normal application stderr or packaged logs.
+    connection
+        .pragma_update(None, "cipher_log_level", "NONE")
+        .map_err(|_| ApplicationError::internal())?;
     connection
         .pragma_update(None, "cipher_memory_security", "ON")
         .map_err(|_| ApplicationError::unauthorized())?;
