@@ -23,7 +23,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
-rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
+# Use a current SQLCipher bundle that includes the patched SQLite 3.54.1 source.
+rusqlite = { version = "0.43", features = ["bundled-sqlcipher-vendored-openssl"] }
 zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
