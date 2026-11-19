@@ -76,7 +76,7 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 
 ### Objective
 
-Make protected local data usable only inside an authenticated, short-lived application session, with a trustworthy lock boundary before finance features are added.
+Make protected local data usable only inside an authenticated, short-lived application session, with a trustworthy lock boundary before finance features are added. Support multiple independently protected local profiles on the same device without exposing one profile's data or key material to another.
 
 ### Work breakdown
 
@@ -85,25 +85,36 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 1. [x] Implement first-run profile creation: profile metadata, passphrase confirmation, unique KDF salt, encryption/key version, and clear recovery limitations. Never persist the passphrase or derived key in preferences, logs, or ordinary database fields.
 2. [~] Implement key derivation with Argon2id using the Phase 1-reviewed parameters. Wrap or reference key material through the OS credential store where available, while retaining passphrase-based authorization as the primary protection. Argon2id derivation and versioned metadata are implemented; optional credential-store integration remains.
 3. [~] Build a session service that owns unlocked key material, enforces profile scope, exposes lock state, clears sensitive memory where practical, and prevents repositories from opening protected data while locked. The local session owns the zeroizing key and protected connection; repository authorization integration remains for later finance commands.
-4. [ ] Add unlock throttling with progressively increasing delays, generic unlock errors, and safe behavior for corrupt/missing profile metadata or unavailable keychain entries.
-5. [~] Implement explicit lock, application-start locked state, configurable inactivity timeout, and background/blur locking where the platform can support it reliably. Ensure pending forms and sensitive UI state are cleared or redacted on lock. Explicit lock and locked startup are implemented; timeout and background locking remain.
-6. [x] Expose only profile setup, unlock, lock, and session-status commands. Validate all input in Rust and return safe error codes to a minimal React first-run/unlock shell.
-7. [~] Add security-focused tests: wrong passphrase, rate limiting, lock transition, timeout, locked-command rejection, profile isolation, KDF/version migration behavior, corrupted ciphertext/metadata handling, and log redaction. Creation/reopen, wrong-passphrase, lock-transition, duplicate-profile, KDF/version, and ciphertext tests are present; the remaining policy tests follow the corresponding services.
+4. [ ] Add a profile registry for multiple local profiles. Store only non-secret profile summaries and validated opaque identifiers in the registry; resolve each profile to an application-owned metadata file and encrypted database path without allowing user-controlled path traversal.
+5. [ ] Refactor profile creation and unlock to target a selected profile. Use one independently encrypted SQLCipher database and one passphrase-derived key per profile, and reject duplicate identifiers without replacing an existing profile.
+6. [ ] Add profile lifecycle commands and DTOs: list profiles, create a profile, unlock the selected profile, lock the active profile, and switch profiles by locking the current session before opening another. Do not allow two active profile sessions unless the session policy and key-lifecycle review explicitly support it.
+7. [ ] Migrate the existing single-profile layout (`finance-tracker.sqlite3` and `finance-tracker.profile.json`) into the registry as the initial profile. Make migration transactional or recoverable, preserve the encrypted database, and define behavior for missing, duplicate, or partially migrated profile metadata.
+8. [ ] Update the React shell with profile selection, profile creation, selected-profile unlock, and switch/lock actions. Keep profile summaries non-sensitive, clear passphrase and pending sensitive form state on switching or locking, and never cache keys or finance data in frontend state.
+9. [x] Add unlock throttling with progressively increasing delays, generic unlock errors, and safe behavior for corrupt/missing profile metadata or unavailable keychain entries.
+10. [~] Implement explicit lock, application-start locked state, configurable inactivity timeout, and background/blur locking where the platform can support it reliably. Ensure pending forms and sensitive UI state are cleared or redacted on lock. Explicit lock and locked startup are implemented; timeout and background locking remain.
+11. [x] Expose only profile setup, unlock, lock, and session-status commands. Validate all input in Rust and return safe error codes to a minimal React first-run/unlock shell.
+12. [ ] Expand the command surface only for the reviewed multi-profile operations, keeping all future finance commands bound to the authenticated active profile scope.
+13. [~] Add security-focused tests: wrong passphrase, rate limiting, lock transition, timeout, locked-command rejection, profile isolation, KDF/version migration behavior, corrupted ciphertext/metadata handling, and log redaction. Creation/reopen, wrong-passphrase, lock-transition, duplicate-profile, KDF/version, and ciphertext tests are present; the remaining policy tests follow the corresponding services.
+14. [ ] Add multi-profile tests covering two-profile creation, independent unlock keys, cross-profile data isolation, duplicate IDs, profile switching, registry corruption, interrupted legacy migration, safe deletion/archival policy, and ensuring locked profiles never expose protected data.
 
 ### Deliverables
 
 - First-run, unlock, and locked-state UI flows.
+- Multi-profile selection, creation, switching, and isolated encrypted storage.
 - Encrypted/profile-protected database opening and session lifecycle service.
 - Documented passphrase recovery limitations and keychain behavior.
 - Automated security tests and manual test checklist for lock behavior.
 
 ### Acceptance criteria
 
-- The application launches locked; no financial repository or finance command can query data until successful authentication.
+- The application launches locked; no financial repository or finance command can query data until successful authentication of a selected profile.
+- A user can create and select multiple local profiles, and each profile has an independently protected database and key lifecycle.
+- Switching profiles locks and clears the previous session before another profile can be opened; a profile cannot read another profile's database or session state.
 - Explicit lock, inactivity timeout, and a failed-unlock path leave no readable financial data in the UI.
 - Failed unlock attempts are throttled and reveal neither whether a profile exists nor sensitive cryptographic details.
 - Sensitive values are absent from normal logs and user-facing errors.
-- The profile can be created, closed, and reopened successfully on each supported development platform.
+- Existing single-profile installations migrate safely and remain reopenable.
+- Every profile can be created, closed, switched, and reopened successfully on each supported development platform.
 
 ## Phase 3 — Core finance workflows
 
