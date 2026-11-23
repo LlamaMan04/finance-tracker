@@ -14,6 +14,9 @@ pub struct StoredProfileMetadata {
     pub profile_id: String,
     /// Holds the versioned salt and KDF settings needed to reproduce the database key.
     pub encryption: EncryptionMetadata,
+    /// Identifies an optional OS credential-store entry and never contains a passphrase or key.
+    #[serde(default)]
+    pub credential_store_reference: Option<String>,
 }
 
 /// Owns the single approved metadata path and prevents accidental replacement.
@@ -101,11 +104,46 @@ mod tests {
         let metadata = StoredProfileMetadata {
             profile_id: "primary-profile".to_owned(),
             encryption: deriver.create_metadata().expect("encryption metadata is generated"),
+            credential_store_reference: Some(
+                "FinanceTracker/v1/profile/primary-profile/database-key".to_owned(),
+            ),
         };
 
         store.create(&metadata).expect("metadata is created");
 
         assert_eq!(store.load().expect("metadata loads"), Some(metadata.clone()));
         assert!(store.create(&metadata).is_err());
+    }
+
+    /// Proves pre-credential-store metadata remains readable after adding the optional reference.
+    #[test]
+    fn loads_legacy_metadata_without_a_credential_store_reference() {
+        let directory = tempfile::tempdir().expect("temporary metadata directory is available");
+        let store = ProfileMetadataStore::new(directory.path().join("profile.json"));
+        let deriver = Argon2idKeyDeriver;
+        let metadata = StoredProfileMetadata {
+            profile_id: "primary-profile".to_owned(),
+            encryption: deriver.create_metadata().expect("encryption metadata is generated"),
+            credential_store_reference: None,
+        };
+        let mut serialized = serde_json::to_value(metadata).expect("metadata serializes");
+        serialized
+            .as_object_mut()
+            .expect("metadata is an object")
+            .remove("credential_store_reference");
+        std::fs::write(
+            directory.path().join("profile.json"),
+            serde_json::to_vec(&serialized).expect("legacy metadata serializes"),
+        )
+        .expect("legacy metadata is written");
+
+        assert!(
+            store
+                .load()
+                .expect("legacy metadata loads")
+                .expect("metadata exists")
+                .credential_store_reference
+                .is_none()
+        );
     }
 }

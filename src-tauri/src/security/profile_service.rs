@@ -3,18 +3,19 @@
 use crate::application::ApplicationError;
 use crate::application::contracts::{ProfileSummaryDto, SessionStatusDto};
 use crate::application::use_cases::{CreateProfileRequest, ProfileService, UnlockProfileRequest};
-use crate::domain::ProfileId;
+use crate::domain::{ProfileId, ProfileScope};
 use crate::infrastructure::database::Database;
 use crate::infrastructure::profile_metadata::{ProfileMetadataStore, StoredProfileMetadata};
 use crate::infrastructure::profile_registry::ProfileRegistry;
-use crate::ports::security::{DatabaseKey, KeyDerivationPort};
-use crate::security::Argon2idKeyDeriver;
+use crate::ports::security::{CredentialStorePort, DatabaseKey, KeyDerivationPort};
+use crate::security::credential_store::credential_reference;
 use crate::security::session_timeout::{DEFAULT_INACTIVITY_TIMEOUT, SessionTimeout};
 use crate::security::unlock_throttle::UnlockThrottle;
+use crate::security::{Argon2idKeyDeriver, PlatformCredentialStore};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Owns all sensitive material and the protected connection for one unlocked session.
@@ -35,6 +36,7 @@ struct SessionState {
 pub struct LocalProfileService {
     registry: ProfileRegistry,
     key_deriver: Argon2idKeyDeriver,
+    credential_store: Arc<dyn CredentialStorePort>,
     inactivity_timeout: SessionTimeout,
     session: Mutex<SessionState>,
     unlock_throttle: Mutex<UnlockThrottle>,
@@ -48,9 +50,27 @@ impl LocalProfileService {
 
     /// Creates the service with an explicit idle policy for platform configuration or focused tests.
     pub fn with_inactivity_timeout(profile_root: PathBuf, inactivity_timeout: Duration) -> Self {
+        Self::with_dependencies(profile_root, inactivity_timeout, Arc::new(PlatformCredentialStore))
+    }
+
+    /// Creates the service with an injected credential-store adapter for focused lifecycle tests.
+    pub fn with_credential_store(
+        profile_root: PathBuf,
+        credential_store: Arc<dyn CredentialStorePort>,
+    ) -> Self {
+        Self::with_dependencies(profile_root, DEFAULT_INACTIVITY_TIMEOUT, credential_store)
+    }
+
+    /// Builds the service from the reviewed dependencies while preserving a locked startup state.
+    fn with_dependencies(
+        profile_root: PathBuf,
+        inactivity_timeout: Duration,
+        credential_store: Arc<dyn CredentialStorePort>,
+    ) -> Self {
         Self {
             registry: ProfileRegistry::new(profile_root),
             key_deriver: Argon2idKeyDeriver,
+            credential_store,
             inactivity_timeout: SessionTimeout::new(inactivity_timeout),
             session: Mutex::new(SessionState {
                 selected_profile_id: None,
@@ -59,6 +79,19 @@ impl LocalProfileService {
             }),
             unlock_throttle: Mutex::new(UnlockThrottle::new()),
         }
+    }
+
+    /// Executes a protected operation only while one profile is active and scoped to that profile.
+    pub fn with_active_profile<T>(
+        &self,
+        operation: impl FnOnce(&ProfileScope, &Database) -> Result<T, ApplicationError>,
+    ) -> Result<T, ApplicationError> {
+        let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
+        self.expire_inactive_session_at(&mut state, Instant::now());
+        let active_session = state.active_session.as_ref().ok_or_else(ApplicationError::locked)?;
+        let scope = ProfileScope::new(active_session.profile_id.clone());
+
+        operation(&scope, &active_session._database)
     }
 
     /// Builds a safe response from selected and active session state.
@@ -126,8 +159,26 @@ impl LocalProfileService {
             .key_deriver
             .derive_database_key(request.passphrase.as_slice(), &stored.encryption)?;
         let database = Database::open(&self.registry.database_path(&profile_id), &database_key)?;
+        self.refresh_credential_store(stored.credential_store_reference.as_deref(), &database_key);
 
         Ok(UnlockedSession { profile_id, _database_key: database_key, _database: database })
+    }
+
+    /// Best-effort credential storage never changes whether a passphrase-authorized session may open.
+    fn refresh_credential_store(&self, reference: Option<&str>, key: &DatabaseKey) {
+        let Some(reference) = reference else {
+            return;
+        };
+        let is_current = self
+            .credential_store
+            .load_database_key(reference)
+            .ok()
+            .flatten()
+            .is_some_and(|stored_key| stored_key.expose() == key.expose());
+        if !is_current {
+            let _ignored_unavailable_store =
+                self.credential_store.store_database_key(reference, key);
+        }
     }
 }
 
@@ -180,8 +231,11 @@ impl ProfileService for LocalProfileService {
             self.key_deriver.derive_database_key(request.passphrase.as_slice(), &encryption)?;
         let database = Database::create(&self.registry.database_path(&profile_id), &database_key)?;
         let metadata_store = ProfileMetadataStore::new(self.registry.metadata_path(&profile_id));
-        let stored_metadata =
-            StoredProfileMetadata { profile_id: profile_id.as_str().to_owned(), encryption };
+        let stored_metadata = StoredProfileMetadata {
+            profile_id: profile_id.as_str().to_owned(),
+            encryption,
+            credential_store_reference: Some(credential_reference(profile_id.as_str())),
+        };
 
         if let Err(error) = metadata_store.create(&stored_metadata) {
             drop(database);
@@ -195,6 +249,10 @@ impl ProfileService for LocalProfileService {
         }
 
         state.selected_profile_id = Some(profile_id.clone());
+        self.refresh_credential_store(
+            stored_metadata.credential_store_reference.as_deref(),
+            &database_key,
+        );
         state.active_session =
             Some(UnlockedSession { profile_id, _database_key: database_key, _database: database });
         state.last_activity_at = Some(Instant::now());
@@ -281,13 +339,60 @@ impl ProfileService for LocalProfileService {
 #[cfg(test)]
 mod tests {
     use super::LocalProfileService;
-    use crate::application::ErrorCode;
     use crate::application::use_cases::{
         CreateProfileRequest, ProfileService, UnlockProfileRequest,
     };
+    use crate::application::{ApplicationError, ErrorCode};
+    use crate::ports::database::DatabasePort;
+    use crate::ports::security::{CredentialStorePort, DATABASE_KEY_LENGTH, DatabaseKey};
+    use std::collections::HashMap;
     use std::fs;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use zeroize::Zeroizing;
+
+    /// Stores test-only credential values so lifecycle tests can observe the optional adapter boundary.
+    struct TestCredentialStore {
+        is_available: bool,
+        entries: Mutex<HashMap<String, [u8; DATABASE_KEY_LENGTH]>>,
+    }
+
+    impl TestCredentialStore {
+        /// Creates an adapter whose availability is explicit in each test fixture.
+        fn new(is_available: bool) -> Self {
+            Self { is_available, entries: Mutex::new(HashMap::new()) }
+        }
+    }
+
+    impl CredentialStorePort for TestCredentialStore {
+        /// Returns a fresh zeroizing key copy so tests never share secret ownership with the adapter.
+        fn load_database_key(
+            &self,
+            reference: &str,
+        ) -> Result<Option<DatabaseKey>, ApplicationError> {
+            if !self.is_available {
+                return Err(ApplicationError::internal());
+            }
+            let entries = self.entries.lock().map_err(|_| ApplicationError::internal())?;
+
+            Ok(entries.get(reference).copied().map(DatabaseKey::new))
+        }
+
+        /// Stores one copied test key under the supplied non-secret reference.
+        fn store_database_key(
+            &self,
+            reference: &str,
+            key: &DatabaseKey,
+        ) -> Result<(), ApplicationError> {
+            if !self.is_available {
+                return Err(ApplicationError::internal());
+            }
+            let mut entries = self.entries.lock().map_err(|_| ApplicationError::internal())?;
+            entries.insert(reference.to_owned(), *key.expose());
+
+            Ok(())
+        }
+    }
 
     fn service_for(directory: &tempfile::TempDir) -> LocalProfileService {
         LocalProfileService::new(directory.path().join("profile-store"))
@@ -403,5 +508,68 @@ mod tests {
             .expect_err("corruption remains private");
         assert_eq!(error.code, ErrorCode::Unauthorized);
         assert!(service.session_status().expect("safe status is available").is_locked);
+    }
+
+    /// Proves every future protected operation receives the active profile scope and rejects locks.
+    #[test]
+    fn scopes_protected_operations_to_the_active_profile_and_rejects_locked_access() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let service = service_for(&directory);
+
+        let locked_error = service
+            .with_active_profile(|_, _| Ok(()))
+            .expect_err("locked sessions cannot run protected operations");
+        assert_eq!(locked_error.code, ErrorCode::Locked);
+
+        service
+            .create_profile(create_request("home", b"home passphrase"))
+            .expect("profile is created");
+        let schema_version = service
+            .with_active_profile(|scope, database| {
+                assert_eq!(scope.profile_id().as_str(), "home");
+                database.schema_version()
+            })
+            .expect("active profile authorizes its own database");
+        assert_eq!(schema_version, 1);
+
+        service.lock().expect("profile locks");
+        let relocked_error = service
+            .with_active_profile(|_, _| Ok(()))
+            .expect_err("explicit lock revokes protected access");
+        assert_eq!(relocked_error.code, ErrorCode::Locked);
+    }
+
+    /// Proves an unavailable optional credential store never replaces the mandatory passphrase path.
+    #[test]
+    fn falls_back_to_passphrase_when_credential_storage_is_unavailable() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let credential_store = Arc::new(TestCredentialStore::new(false));
+        let service = LocalProfileService::with_credential_store(
+            directory.path().join("profile-store"),
+            credential_store,
+        );
+        service
+            .create_profile(create_request("home", b"home passphrase"))
+            .expect("profile creation ignores unavailable optional storage");
+        service.lock().expect("profile locks");
+
+        assert!(service.unlock_profile(unlock_request("home", b"home passphrase")).is_ok());
+    }
+
+    /// Proves a successful profile setup records only its derived key in the optional credential store.
+    #[test]
+    fn stores_profile_keys_under_the_expected_non_secret_credential_reference() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let credential_store = Arc::new(TestCredentialStore::new(true));
+        let service = LocalProfileService::with_credential_store(
+            directory.path().join("profile-store"),
+            credential_store.clone(),
+        );
+        service
+            .create_profile(create_request("home", b"home passphrase"))
+            .expect("profile is created");
+
+        let entries = credential_store.entries.lock().expect("test credential store is available");
+        assert!(entries.contains_key("FinanceTracker/v1/profile/home/database-key"));
     }
 }

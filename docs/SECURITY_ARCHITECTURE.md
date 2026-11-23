@@ -66,7 +66,7 @@ Wrong keys, corrupted ciphertext, and malformed encrypted databases produce the 
 
 ## OS credential store
 
-Passphrase authorization remains mandatory. Windows Credential Manager is feasible as an optional convenience layer for the committed Windows target, but it will store only a wrapped database key or opaque key reference—not the passphrase and not unwrapped key material in application preferences. The adapter will be added behind a key-storage port during Phase 2 and must degrade safely to passphrase unlock when the entry is absent or unavailable.
+Passphrase authorization remains mandatory. On Windows, the Phase 2 `CredentialStorePort` adapter stores the derived database key in Windows Credential Manager under a deterministic, non-secret profile reference. It never stores the passphrase or places unwrapped key material in application preferences. The entry is a convenience copy only: each unlock still derives the key from the passphrase, opens SQLCipher with that derived key, and refreshes the credential entry only after successful database authentication. A missing, unavailable, malformed, or stale entry safely falls back to the same passphrase path.
 
 macOS Keychain and Linux Secret Service can implement the same future port without changing the database format. They are not release commitments under the current support policy.
 
@@ -83,6 +83,7 @@ The bundled SQLCipher/OpenSSL build keeps the database API and key format consis
 - Corrupt or tampered database: fail authentication before running migrations.
 - Interrupted schema migration: retain the existing transactional migration behavior.
 - Lost passphrase with no usable wrapped-key recovery: data is unrecoverable.
+- Profile deletion and archival are intentionally unavailable in Phase 2. The profile registry has no destructive lifecycle command; any future archival or deletion workflow must require an unlocked selected profile, an explicit confirmation, and a recoverable encrypted-backup/export path before removing profile metadata, database, or credential-store material.
 
 There is no plaintext in-place upgrade from the pre-security bootstrap database because it contains no user financial data. Development bootstrap files may be deleted manually; production profile creation always creates a protected database.
 
