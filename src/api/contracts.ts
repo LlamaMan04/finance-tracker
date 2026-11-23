@@ -22,6 +22,8 @@ export interface SessionStatus {
   profileId: string | null;
   /** Prevents UI features from assuming protected data is readable. */
   isLocked: boolean;
+  /** Exposes the active session's non-sensitive idle timeout for UI scheduling only. */
+  inactivityTimeoutMilliseconds: number | null;
 }
 
 /** Describes the non-sensitive profile identity available before authentication. */

@@ -7,7 +7,8 @@ pub mod security;
 
 use crate::application::ApplicationError;
 use crate::commands::profile::{
-    create_profile, get_session_status, list_profiles, lock_profile, switch_profile, unlock_profile,
+    create_profile, get_session_status, list_profiles, lock_profile, record_session_activity,
+    switch_profile, unlock_profile,
 };
 use crate::security::LocalProfileService;
 use std::error::Error;
@@ -33,6 +34,7 @@ pub fn run() {
             create_profile,
             unlock_profile,
             lock_profile,
+            record_session_activity,
             switch_profile
         ])
         .run(tauri::generate_context!())

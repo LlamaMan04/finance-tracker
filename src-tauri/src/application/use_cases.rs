@@ -33,6 +33,9 @@ pub trait ProfileService {
     /// Drops the active protected session and its in-memory key material.
     fn lock(&self) -> Result<(), ApplicationError>;
 
+    /// Records verified local interaction or returns a locked status after the idle policy expires.
+    fn record_activity(&self) -> Result<SessionStatusDto, ApplicationError>;
+
     /// Locks any active session and selects a known profile for a later unlock attempt.
     fn switch_profile(&self, profile_id: String) -> Result<SessionStatusDto, ApplicationError>;
 }

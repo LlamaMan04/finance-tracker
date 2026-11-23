@@ -34,6 +34,11 @@ export class FinanceCommandClient {
     await this.invokeCommand<void>("lock_profile");
   }
 
+  /** Records verified local UI activity without requesting protected finance data. */
+  async recordSessionActivity(): Promise<SessionStatus> {
+    return this.invokeCommand<SessionStatus>("record_session_activity");
+  }
+
   /** Locks any active session before selecting another profile for unlock. */
   async switchProfile(profileId: string): Promise<SessionStatus> {
     return this.invokeCommand<SessionStatus>("switch_profile", { profileId });

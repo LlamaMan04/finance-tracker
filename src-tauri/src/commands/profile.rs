@@ -90,7 +90,7 @@ fn validate_non_empty_passphrase(value: &str) -> Result<(), ApplicationError> {
 
 /// Supplies the safe locked state used by the future status command before any profile is active.
 pub fn locked_session_status() -> SessionStatusDto {
-    SessionStatusDto { profile_id: None, is_locked: true }
+    SessionStatusDto { profile_id: None, is_locked: true, inactivity_timeout_milliseconds: None }
 }
 
 /// Returns setup, locked, or unlocked state without opening protected data.
@@ -135,6 +135,14 @@ pub fn unlock_profile(
 #[tauri::command]
 pub fn lock_profile(service: State<'_, LocalProfileService>) -> Result<(), ApplicationError> {
     service.lock().map_err(safe_error)
+}
+
+/// Records local interaction so an authenticated session can remain open within its idle policy.
+#[tauri::command]
+pub fn record_session_activity(
+    service: State<'_, LocalProfileService>,
+) -> Result<SessionStatusDto, ApplicationError> {
+    service.record_activity().map_err(safe_error)
 }
 
 /// Locks an active profile before selecting a known profile for its later unlock attempt.

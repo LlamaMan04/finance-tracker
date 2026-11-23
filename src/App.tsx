@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "./App.css";
 import { FinanceCommandClient, FinanceCommandError } from "./api/commandClient";
 import type { ProfileSummary, SessionStatus } from "./api/contracts";
@@ -67,7 +67,7 @@ function App() {
   }
 
   /** Drops protected session material while keeping only the safe selected profile ID. */
-  async function lockProfile() {
+  const lockProfile = useCallback(async () => {
     setIsWorking(true);
     setErrorMessage(null);
     try {
@@ -78,7 +78,96 @@ function App() {
     } finally {
       setIsWorking(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    /** Avoids scheduling timers while no authenticated session is active. */
+    if (
+      sessionStatus === null ||
+      sessionStatus.isLocked ||
+      sessionStatus.inactivityTimeoutMilliseconds === null
+    ) {
+      return undefined;
+    }
+
+    /** Keeps the local deadline synchronized with the active backend session policy. */
+    const inactivityTimeoutMilliseconds = sessionStatus.inactivityTimeoutMilliseconds;
+    /** Avoids command traffic for every keystroke while refreshing before the timeout elapses. */
+    const activityRefreshMilliseconds = Math.max(
+      1_000,
+      Math.floor(inactivityTimeoutMilliseconds / 2),
+    );
+    /** Tracks this effect lifecycle so delayed command responses cannot revive a stale screen. */
+    let isDisposed = false;
+    /** Holds the current UI timer without persisting any protected data. */
+    let inactivityTimer: number | undefined;
+    /** Limits backend activity refreshes while preserving the configured timeout window. */
+    let lastActivityRecordedAt = Date.now();
+
+    /** Starts the local deadline that proactively clears the session when interaction stops. */
+    function scheduleInactivityLock() {
+      if (inactivityTimer !== undefined) {
+        window.clearTimeout(inactivityTimer);
+      }
+      inactivityTimer = window.setTimeout(() => {
+        isDisposed = true;
+        void lockProfile();
+      }, inactivityTimeoutMilliseconds);
+    }
+
+    /** Records real UI interaction only often enough to keep the backend session alive. */
+    function recordActivity() {
+      scheduleInactivityLock();
+      const now = Date.now();
+      if (now - lastActivityRecordedAt < activityRefreshMilliseconds) {
+        return;
+      }
+      lastActivityRecordedAt = now;
+      void commandClient
+        .recordSessionActivity()
+        .then((status) => {
+          if (!isDisposed) {
+            setSessionStatus(status);
+          }
+        })
+        .catch((error: unknown) => {
+          if (!isDisposed) {
+            setErrorMessage(messageForError(error));
+          }
+        });
+    }
+
+    /** Locks before the desktop window leaves the foreground. */
+    function lockOnBlur() {
+      isDisposed = true;
+      void lockProfile();
+    }
+
+    /** Locks when the WebView becomes hidden on platforms that report visibility changes. */
+    function lockWhenHidden() {
+      if (document.hidden) {
+        isDisposed = true;
+        void lockProfile();
+      }
+    }
+
+    scheduleInactivityLock();
+    window.addEventListener("pointerdown", recordActivity);
+    window.addEventListener("keydown", recordActivity);
+    window.addEventListener("blur", lockOnBlur);
+    document.addEventListener("visibilitychange", lockWhenHidden);
+
+    return () => {
+      isDisposed = true;
+      if (inactivityTimer !== undefined) {
+        window.clearTimeout(inactivityTimer);
+      }
+      window.removeEventListener("pointerdown", recordActivity);
+      window.removeEventListener("keydown", recordActivity);
+      window.removeEventListener("blur", lockOnBlur);
+      document.removeEventListener("visibilitychange", lockWhenHidden);
+    };
+  }, [lockProfile, sessionStatus]);
 
   /** Locks before returning to the public profile picker, preserving the session boundary on errors. */
   async function returnToProfilePicker() {
@@ -86,7 +175,11 @@ function App() {
     setErrorMessage(null);
     try {
       await commandClient.lock();
-      setSessionStatus({ isLocked: true, profileId: null });
+      setSessionStatus({
+        isLocked: true,
+        profileId: null,
+        inactivityTimeoutMilliseconds: null,
+      });
     } catch (error: unknown) {
       setErrorMessage(messageForError(error));
     } finally {
@@ -139,7 +232,13 @@ function App() {
           errorMessage={errorMessage}
           isWorking={isWorking}
           key={sessionStatus.profileId}
-          onChooseProfile={() => setSessionStatus({ isLocked: true, profileId: null })}
+          onChooseProfile={() =>
+            setSessionStatus({
+              isLocked: true,
+              profileId: null,
+              inactivityTimeoutMilliseconds: null,
+            })
+          }
           onUnlock={(passphrase) =>
             runTransition(() =>
               commandClient.unlockProfile({ profileId: sessionStatus.profileId ?? "", passphrase }),

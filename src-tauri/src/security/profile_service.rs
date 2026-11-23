@@ -9,12 +9,13 @@ use crate::infrastructure::profile_metadata::{ProfileMetadataStore, StoredProfil
 use crate::infrastructure::profile_registry::ProfileRegistry;
 use crate::ports::security::{DatabaseKey, KeyDerivationPort};
 use crate::security::Argon2idKeyDeriver;
+use crate::security::session_timeout::{DEFAULT_INACTIVITY_TIMEOUT, SessionTimeout};
 use crate::security::unlock_throttle::UnlockThrottle;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Owns all sensitive material and the protected connection for one unlocked session.
 struct UnlockedSession {
@@ -27,12 +28,14 @@ struct UnlockedSession {
 struct SessionState {
     selected_profile_id: Option<ProfileId>,
     active_session: Option<UnlockedSession>,
+    last_activity_at: Option<Instant>,
 }
 
 /// Coordinates the local profile lifecycle while keeping startup fully locked.
 pub struct LocalProfileService {
     registry: ProfileRegistry,
     key_deriver: Argon2idKeyDeriver,
+    inactivity_timeout: SessionTimeout,
     session: Mutex<SessionState>,
     unlock_throttle: Mutex<UnlockThrottle>,
 }
@@ -40,23 +43,52 @@ pub struct LocalProfileService {
 impl LocalProfileService {
     /// Creates the service around an application-owned root without opening protected data.
     pub fn new(profile_root: PathBuf) -> Self {
+        Self::with_inactivity_timeout(profile_root, DEFAULT_INACTIVITY_TIMEOUT)
+    }
+
+    /// Creates the service with an explicit idle policy for platform configuration or focused tests.
+    pub fn with_inactivity_timeout(profile_root: PathBuf, inactivity_timeout: Duration) -> Self {
         Self {
             registry: ProfileRegistry::new(profile_root),
             key_deriver: Argon2idKeyDeriver,
-            session: Mutex::new(SessionState { selected_profile_id: None, active_session: None }),
+            inactivity_timeout: SessionTimeout::new(inactivity_timeout),
+            session: Mutex::new(SessionState {
+                selected_profile_id: None,
+                active_session: None,
+                last_activity_at: None,
+            }),
             unlock_throttle: Mutex::new(UnlockThrottle::new()),
         }
     }
 
     /// Builds a safe response from selected and active session state.
-    fn status(state: &SessionState) -> SessionStatusDto {
+    fn status(&self, state: &SessionState) -> SessionStatusDto {
         let profile_id = state
             .active_session
             .as_ref()
             .map(|session| session.profile_id.as_str())
             .or_else(|| state.selected_profile_id.as_ref().map(ProfileId::as_str))
             .map(str::to_owned);
-        SessionStatusDto { profile_id, is_locked: state.active_session.is_none() }
+        SessionStatusDto {
+            profile_id,
+            is_locked: state.active_session.is_none(),
+            inactivity_timeout_milliseconds: state
+                .active_session
+                .as_ref()
+                .map(|_| self.inactivity_timeout.milliseconds()),
+        }
+    }
+
+    /// Drops an idle unlocked session before any status or activity operation can use it.
+    fn expire_inactive_session_at(&self, state: &mut SessionState, now: Instant) {
+        let has_expired = state.active_session.is_some()
+            && state.last_activity_at.is_some_and(|last_activity_at| {
+                self.inactivity_timeout.has_expired_at(last_activity_at, now)
+            });
+        if has_expired {
+            state.active_session = None;
+            state.last_activity_at = None;
+        }
     }
 
     /// Removes database artifacts created during a setup attempt whose registry publication failed.
@@ -122,8 +154,9 @@ impl ProfileService for LocalProfileService {
 
     /// Reports selected and active status without opening any protected database.
     fn session_status(&self) -> Result<SessionStatusDto, ApplicationError> {
-        let state = self.session.lock().map_err(|_| ApplicationError::internal())?;
-        Ok(Self::status(&state))
+        let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
+        self.expire_inactive_session_at(&mut state, Instant::now());
+        Ok(self.status(&state))
     }
 
     /// Creates one encrypted profile, then registers it after all protected files exist.
@@ -132,6 +165,7 @@ impl ProfileService for LocalProfileService {
         request: CreateProfileRequest,
     ) -> Result<SessionStatusDto, ApplicationError> {
         let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
+        self.expire_inactive_session_at(&mut state, Instant::now());
         if state.active_session.is_some() {
             return Err(ApplicationError::conflict());
         }
@@ -163,8 +197,9 @@ impl ProfileService for LocalProfileService {
         state.selected_profile_id = Some(profile_id.clone());
         state.active_session =
             Some(UnlockedSession { profile_id, _database_key: database_key, _database: database });
+        state.last_activity_at = Some(Instant::now());
 
-        Ok(Self::status(&state))
+        Ok(self.status(&state))
     }
 
     /// Reproduces the selected database key and opens data only after key validation.
@@ -173,9 +208,11 @@ impl ProfileService for LocalProfileService {
         request: UnlockProfileRequest,
     ) -> Result<SessionStatusDto, ApplicationError> {
         let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
+        let now = Instant::now();
+        self.expire_inactive_session_at(&mut state, now);
         if let Some(active_session) = state.active_session.as_ref() {
             if active_session.profile_id.as_str() == request.profile_id {
-                return Ok(Self::status(&state));
+                return Ok(self.status(&state));
             }
             return Err(ApplicationError::conflict());
         }
@@ -185,7 +222,6 @@ impl ProfileService for LocalProfileService {
             return Err(ApplicationError::unauthorized());
         }
 
-        let now = Instant::now();
         let mut throttle = self.unlock_throttle.lock().map_err(|_| ApplicationError::internal())?;
         if throttle.is_blocked_at(now) {
             return Err(ApplicationError::unauthorized());
@@ -200,16 +236,30 @@ impl ProfileService for LocalProfileService {
         };
         throttle.reset();
         state.active_session = Some(active_session);
+        state.last_activity_at = Some(now);
 
-        Ok(Self::status(&state))
+        Ok(self.status(&state))
     }
 
     /// Drops the connection and zeroizing key owner while retaining only a safe selection.
     fn lock(&self) -> Result<(), ApplicationError> {
         let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
         state.active_session = None;
+        state.last_activity_at = None;
 
         Ok(())
+    }
+
+    /// Refreshes the idle deadline only for an active session that has not already expired.
+    fn record_activity(&self) -> Result<SessionStatusDto, ApplicationError> {
+        let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
+        let now = Instant::now();
+        self.expire_inactive_session_at(&mut state, now);
+        if state.active_session.is_some() {
+            state.last_activity_at = Some(now);
+        }
+
+        Ok(self.status(&state))
     }
 
     /// Locks a current profile before selecting another known profile for unlock.
@@ -221,9 +271,10 @@ impl ProfileService for LocalProfileService {
 
         let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
         state.active_session = None;
+        state.last_activity_at = None;
         state.selected_profile_id = Some(profile_id);
 
-        Ok(Self::status(&state))
+        Ok(self.status(&state))
     }
 }
 
@@ -235,6 +286,7 @@ mod tests {
         CreateProfileRequest, ProfileService, UnlockProfileRequest,
     };
     use std::fs;
+    use std::time::Duration;
     use zeroize::Zeroizing;
 
     fn service_for(directory: &tempfile::TempDir) -> LocalProfileService {
@@ -298,6 +350,26 @@ mod tests {
             .expect_err("wrong passphrase is rejected");
 
         assert_eq!(error.code, ErrorCode::Unauthorized);
+        assert!(service.session_status().expect("safe status is available").is_locked);
+    }
+
+    /// Proves an expired active session closes its database owner and cannot be revived by activity.
+    #[test]
+    fn expires_an_idle_session_before_recording_new_activity() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let service = LocalProfileService::with_inactivity_timeout(
+            directory.path().join("profile-store"),
+            Duration::ZERO,
+        );
+        service
+            .create_profile(create_request("home", b"home passphrase"))
+            .expect("profile is created");
+
+        let status = service.record_activity().expect("activity status is safe");
+
+        assert!(status.is_locked);
+        assert_eq!(status.profile_id.as_deref(), Some("home"));
+        assert_eq!(status.inactivity_timeout_milliseconds, None);
         assert!(service.session_status().expect("safe status is available").is_locked);
     }
 
