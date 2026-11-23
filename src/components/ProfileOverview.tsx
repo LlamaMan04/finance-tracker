@@ -6,6 +6,7 @@ interface ProfileOverviewProps {
   isWorking: boolean;
   profileId: string;
   onLock: () => void;
+  onSwitchProfile: () => void;
 }
 
 /** Renders the unlocked placeholder while finance workflows are not yet available. */
@@ -14,6 +15,7 @@ export function ProfileOverview({
   isWorking,
   profileId,
   onLock,
+  onSwitchProfile,
 }: ProfileOverviewProps) {
   return (
     <section aria-labelledby="unlocked-heading" className="profile-card">
@@ -24,6 +26,14 @@ export function ProfileOverview({
       </p>
       <button disabled={isWorking} onClick={onLock} type="button">
         {isWorking ? "Locking…" : "Lock profile"}
+      </button>
+      <button
+        className="secondary-button"
+        disabled={isWorking}
+        onClick={onSwitchProfile}
+        type="button"
+      >
+        Switch profile
       </button>
       <ErrorNotice message={errorMessage} />
     </section>

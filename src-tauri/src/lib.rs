@@ -6,7 +6,9 @@ pub mod ports;
 pub mod security;
 
 use crate::application::ApplicationError;
-use crate::commands::profile::{create_profile, get_session_status, lock_profile, unlock_profile};
+use crate::commands::profile::{
+    create_profile, get_session_status, list_profiles, lock_profile, switch_profile, unlock_profile,
+};
 use crate::security::LocalProfileService;
 use std::error::Error;
 use tauri::Manager;
@@ -20,17 +22,18 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .map_err(|_| Box::<dyn Error>::from(ApplicationError::internal()))?;
-            let database_path = application_data_path.join("finance-tracker.sqlite3");
-            let metadata_path = application_data_path.join("finance-tracker.profile.json");
+            let profile_root = application_data_path.join("profiles");
 
-            app.manage(LocalProfileService::new(database_path, metadata_path));
+            app.manage(LocalProfileService::new(profile_root));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_session_status,
+            list_profiles,
             create_profile,
             unlock_profile,
-            lock_profile
+            lock_profile,
+            switch_profile
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

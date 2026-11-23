@@ -24,6 +24,12 @@ export interface SessionStatus {
   isLocked: boolean;
 }
 
+/** Describes the non-sensitive profile identity available before authentication. */
+export interface ProfileSummary {
+  /** Holds the opaque profile ID without a path, key, or finance content. */
+  id: string;
+}
+
 /** Carries profile-creation input only for the duration of a future command invocation. */
 export interface CreateProfileInput {
   /** Supplies the chosen stable identifier. */

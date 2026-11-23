@@ -12,6 +12,14 @@ pub struct SessionStatusDto {
     pub is_locked: bool,
 }
 
+/// Identifies a selectable local profile without exposing protected contents or paths.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSummaryDto {
+    /// Holds the opaque profile identifier selected before authentication.
+    pub id: String,
+}
+
 /// Carries the non-secret budget fields that future commands will accept or display.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,7 +112,7 @@ pub struct BackupDto {
 
 #[cfg(test)]
 mod tests {
-    use super::{SessionStatusDto, TransactionDto};
+    use super::{ProfileSummaryDto, SessionStatusDto, TransactionDto};
 
     #[test]
     fn serializes_safe_session_status_with_frontend_field_names() {
@@ -133,5 +141,13 @@ mod tests {
         .expect("transaction DTO must serialize for commands");
 
         assert_eq!(serialized["minorUnits"], "9007199254740993");
+    }
+
+    #[test]
+    fn serializes_a_non_secret_profile_summary() {
+        let serialized = serde_json::to_value(ProfileSummaryDto { id: "home-profile".to_owned() })
+            .expect("profile summary must serialize for commands");
+
+        assert_eq!(serialized, serde_json::json!({ "id": "home-profile" }));
     }
 }

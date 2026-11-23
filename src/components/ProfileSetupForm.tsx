@@ -10,10 +10,16 @@ interface ProfileSetupFormProps {
     passphrase: string,
     passphraseConfirmation: string,
   ) => Promise<void>;
+  onCancel?: () => void;
 }
 
 /** Collects first-run credentials and clears both secret controls after submission. */
-export function ProfileSetupForm({ errorMessage, isWorking, onCreate }: ProfileSetupFormProps) {
+export function ProfileSetupForm({
+  errorMessage,
+  isWorking,
+  onCreate,
+  onCancel,
+}: ProfileSetupFormProps) {
   /** Holds the identifier only while the setup form is active. */
   const [profileId, setProfileId] = useState("primary-profile");
   /** Holds the passphrase only for the active setup interaction. */
@@ -78,6 +84,11 @@ export function ProfileSetupForm({ errorMessage, isWorking, onCreate }: ProfileS
         </button>
       </form>
       <ErrorNotice message={errorMessage} />
+      {onCancel ? (
+        <button className="secondary-button" disabled={isWorking} onClick={onCancel} type="button">
+          Choose an existing profile
+        </button>
+      ) : null}
     </section>
   );
 }

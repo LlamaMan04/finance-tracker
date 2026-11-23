@@ -7,6 +7,7 @@ interface ProfileUnlockFormProps {
   isWorking: boolean;
   profileId: string;
   onUnlock: (passphrase: string) => Promise<void>;
+  onChooseProfile: () => void;
 }
 
 /** Collects an unlock passphrase and clears it after every attempt. */
@@ -15,6 +16,7 @@ export function ProfileUnlockForm({
   isWorking,
   profileId,
   onUnlock,
+  onChooseProfile,
 }: ProfileUnlockFormProps) {
   /** Holds the passphrase only during the current unlock interaction. */
   const [passphrase, setPassphrase] = useState("");
@@ -52,6 +54,14 @@ export function ProfileUnlockForm({
         </button>
       </form>
       <ErrorNotice message={errorMessage} />
+      <button
+        className="secondary-button"
+        disabled={isWorking}
+        onClick={onChooseProfile}
+        type="button"
+      >
+        Choose another profile
+      </button>
     </section>
   );
 }

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ApiErrorPayload,
   CreateProfileInput,
+  ProfileSummary,
   SessionStatus,
   UnlockProfileInput,
 } from "./contracts";
@@ -11,6 +12,11 @@ export class FinanceCommandClient {
   /** Retrieves lock status without requesting protected finance data. */
   async getSessionStatus(): Promise<SessionStatus> {
     return this.invokeCommand<SessionStatus>("get_session_status");
+  }
+
+  /** Lists non-secret local profile identities without opening their databases. */
+  async listProfiles(): Promise<ProfileSummary[]> {
+    return this.invokeCommand<ProfileSummary[]>("list_profiles");
   }
 
   /** Sends setup input directly to Rust without storing it in this client. */
@@ -26,6 +32,11 @@ export class FinanceCommandClient {
   /** Requests an explicit lock transition that Phase 2 will implement. */
   async lock(): Promise<void> {
     await this.invokeCommand<void>("lock_profile");
+  }
+
+  /** Locks any active session before selecting another profile for unlock. */
+  async switchProfile(profileId: string): Promise<SessionStatus> {
+    return this.invokeCommand<SessionStatus>("switch_profile", { profileId });
   }
 
   /** Converts unknown Tauri failures into the reviewed frontend error shape. */

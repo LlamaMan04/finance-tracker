@@ -1,7 +1,7 @@
 //! Validation helpers for the future profile setup and unlock command adapters.
 
 use crate::application::ApplicationError;
-use crate::application::contracts::SessionStatusDto;
+use crate::application::contracts::{ProfileSummaryDto, SessionStatusDto};
 use crate::application::use_cases::ProfileService;
 use crate::application::use_cases::{CreateProfileRequest, UnlockProfileRequest};
 use crate::commands::safe_error;
@@ -101,6 +101,14 @@ pub fn get_session_status(
     service.session_status().map_err(safe_error)
 }
 
+/// Lists non-secret local profiles without opening any protected database.
+#[tauri::command]
+pub fn list_profiles(
+    service: State<'_, LocalProfileService>,
+) -> Result<Vec<ProfileSummaryDto>, ApplicationError> {
+    service.list_profiles().map_err(safe_error)
+}
+
 /// Validates first-run input before creating an encrypted local profile.
 #[tauri::command]
 pub fn create_profile(
@@ -127,6 +135,16 @@ pub fn unlock_profile(
 #[tauri::command]
 pub fn lock_profile(service: State<'_, LocalProfileService>) -> Result<(), ApplicationError> {
     service.lock().map_err(safe_error)
+}
+
+/// Locks an active profile before selecting a known profile for its later unlock attempt.
+#[tauri::command]
+pub fn switch_profile(
+    service: State<'_, LocalProfileService>,
+    profile_id: String,
+) -> Result<SessionStatusDto, ApplicationError> {
+    validate_profile_id(&profile_id).map_err(safe_error)?;
+    service.switch_profile(profile_id).map_err(safe_error)
 }
 
 #[cfg(test)]
