@@ -88,14 +88,13 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 4. [x] Add a profile registry for multiple local profiles. Store only non-secret profile summaries and validated opaque identifiers in the registry; resolve each profile to an application-owned metadata file and encrypted database path without allowing user-controlled path traversal.
 5. [x] Refactor profile creation and unlock to target a selected profile. Use one independently encrypted SQLCipher database and one passphrase-derived key per profile, and reject duplicate identifiers without replacing an existing profile.
 6. [x] Add profile lifecycle commands and DTOs: list profiles, create a profile, unlock the selected profile, lock the active profile, and switch profiles by locking the current session before opening another. Do not allow two active profile sessions unless the session policy and key-lifecycle review explicitly support it.
-7. [ ] Migrate the existing single-profile layout (`finance-tracker.sqlite3` and `finance-tracker.profile.json`) into the registry as the initial profile. Make migration transactional or recoverable, preserve the encrypted database, and define behavior for missing, duplicate, or partially migrated profile metadata.
-8. [x] Update the React shell with profile selection, profile creation, selected-profile unlock, and switch/lock actions. Keep profile summaries non-sensitive, clear passphrase and pending sensitive form state on switching or locking, and never cache keys or finance data in frontend state.
-9. [x] Add unlock throttling with progressively increasing delays, generic unlock errors, and safe behavior for corrupt/missing profile metadata or unavailable keychain entries.
-10. [~] Implement explicit lock, application-start locked state, configurable inactivity timeout, and background/blur locking where the platform can support it reliably. Ensure pending forms and sensitive UI state are cleared or redacted on lock. Explicit lock and locked startup are implemented; timeout and background locking remain.
-11. [x] Expose only profile setup, unlock, lock, and session-status commands. Validate all input in Rust and return safe error codes to a minimal React first-run/unlock shell.
-12. [x] Expand the command surface only for the reviewed multi-profile operations, keeping all future finance commands bound to the authenticated active profile scope.
-13. [~] Add security-focused tests: wrong passphrase, rate limiting, lock transition, timeout, locked-command rejection, profile isolation, KDF/version migration behavior, corrupted ciphertext/metadata handling, and log redaction. Creation/reopen, wrong-passphrase, lock-transition, duplicate-profile, KDF/version, and ciphertext tests are present; the remaining policy tests follow the corresponding services.
-14. [~] Add multi-profile tests covering two-profile creation, independent unlock keys, cross-profile data isolation, duplicate IDs, profile switching, registry corruption, interrupted legacy migration, safe deletion/archival policy, and ensuring locked profiles never expose protected data. Creation, independent keys, switching, duplicate IDs, and registry corruption are covered; legacy migration and lifecycle-policy tests remain with their corresponding work.
+7. [x] Update the React shell with profile selection, profile creation, selected-profile unlock, and switch/lock actions. Keep profile summaries non-sensitive, clear passphrase and pending sensitive form state on switching or locking, and never cache keys or finance data in frontend state.
+8. [x] Add unlock throttling with progressively increasing delays, generic unlock errors, and safe behavior for corrupt/missing profile metadata or unavailable keychain entries.
+9. [~] Implement explicit lock, application-start locked state, configurable inactivity timeout, and background/blur locking where the platform can support it reliably. Ensure pending forms and sensitive UI state are cleared or redacted on lock. Explicit lock and locked startup are implemented; timeout and background locking remain.
+10. [x] Expose only profile setup, unlock, lock, and session-status commands. Validate all input in Rust and return safe error codes to a minimal React first-run/unlock shell.
+11. [x] Expand the command surface only for the reviewed multi-profile operations, keeping all future finance commands bound to the authenticated active profile scope.
+12. [~] Add security-focused tests: wrong passphrase, rate limiting, lock transition, timeout, locked-command rejection, profile isolation, KDF/version migration behavior, corrupted ciphertext/metadata handling, and log redaction. Creation/reopen, wrong-passphrase, lock-transition, duplicate-profile, KDF/version, and ciphertext tests are present; the remaining policy tests follow the corresponding services.
+13. [~] Add multi-profile tests covering two-profile creation, independent unlock keys, cross-profile data isolation, duplicate IDs, profile switching, registry corruption, safe deletion/archival policy, and ensuring locked profiles never expose protected data. Creation, independent keys, switching, duplicate IDs, and registry corruption are covered; lifecycle-policy tests remain with their corresponding work.
 
 ### Deliverables
 
@@ -113,7 +112,6 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 - Explicit lock, inactivity timeout, and a failed-unlock path leave no readable financial data in the UI.
 - Failed unlock attempts are throttled and reveal neither whether a profile exists nor sensitive cryptographic details.
 - Sensitive values are absent from normal logs and user-facing errors.
-- Existing single-profile installations migrate safely and remain reopenable.
 - Every profile can be created, closed, switched, and reopened successfully on each supported development platform.
 
 ## Phase 3 — Core finance workflows
