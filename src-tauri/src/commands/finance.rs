@@ -1,7 +1,7 @@
 //! Validated Tauri commands for profile-scoped budgets, categories, and accounts.
 
 use crate::application::ApplicationError;
-use crate::application::contracts::{AccountDto, BudgetDto, CategoryDto};
+use crate::application::contracts::{AccountDto, BudgetDto, CategoryDto, TransactionDto};
 use crate::commands::safe_error;
 use crate::infrastructure::finance_repository::FinanceRepository;
 use crate::security::LocalProfileService;
@@ -62,6 +62,22 @@ pub struct AccountUpdateInput {
     pub id: String,
     pub name: String,
     pub account_type: String,
+}
+
+/// Accepts untrusted income or expense fields while keeping ledger validation in Rust.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionInput {
+    pub account_id: String,
+    pub budget_id: Option<String>,
+    pub category_id: Option<String>,
+    pub entry_type: String,
+    pub minor_units: String,
+    pub currency: String,
+    pub occurred_on: String,
+    pub payee: Option<String>,
+    pub description: Option<String>,
+    pub notes: Option<String>,
 }
 
 /// Lists protected budgets only after the active profile has authenticated.
@@ -239,6 +255,36 @@ pub fn archive_account(
     service
         .with_active_profile(|scope, database| {
             FinanceRepository::archive_account(database, scope, &id)
+        })
+        .map_err(safe_error)
+}
+
+/// Records a protected immutable income or expense entry in the active profile.
+#[tauri::command]
+pub fn create_transaction(
+    service: State<'_, LocalProfileService>,
+    request: TransactionInput,
+) -> Result<TransactionDto, ApplicationError> {
+    let minor_units = request
+        .minor_units
+        .parse::<i64>()
+        .map_err(|_| safe_error(ApplicationError::validation()))?;
+    service
+        .with_active_profile(|scope, database| {
+            FinanceRepository::create_transaction(
+                database,
+                scope,
+                &request.account_id,
+                request.budget_id.as_deref(),
+                request.category_id.as_deref(),
+                &request.entry_type,
+                minor_units,
+                &request.currency,
+                &request.occurred_on,
+                request.payee.as_deref(),
+                request.description.as_deref(),
+                request.notes.as_deref(),
+            )
         })
         .map_err(safe_error)
 }

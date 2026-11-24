@@ -80,6 +80,8 @@ pub struct TransactionDto {
     pub id: String,
     /// Holds the account affected by this transaction.
     pub account_id: String,
+    /// Holds the optional budget selected for the entry.
+    pub budget_id: Option<String>,
     /// Holds the optional budget category affected by this transaction.
     pub category_id: Option<String>,
     /// Stores the signed amount as exact minor units represented as a string at the UI boundary.
@@ -90,6 +92,12 @@ pub struct TransactionDto {
     pub occurred_on: String,
     /// Identifies whether the entry is income, expense, transfer, or correction.
     pub entry_type: String,
+    /// Holds the optional counterparty name supplied for display.
+    pub payee: Option<String>,
+    /// Holds the optional short description supplied for display.
+    pub description: Option<String>,
+    /// Holds the optional long-form note supplied for display.
+    pub notes: Option<String>,
 }
 
 /// Carries a transaction-to-budget allocation without financial calculation logic in the UI.
@@ -142,11 +150,15 @@ mod tests {
         let serialized = serde_json::to_value(TransactionDto {
             id: "transaction-01".to_owned(),
             account_id: "account-01".to_owned(),
+            budget_id: None,
             category_id: None,
             minor_units: "9007199254740993".to_owned(),
             currency: "USD".to_owned(),
             occurred_on: "2026-11-18".to_owned(),
             entry_type: "expense".to_owned(),
+            payee: None,
+            description: None,
+            notes: None,
         })
         .expect("transaction DTO must serialize for commands");
 

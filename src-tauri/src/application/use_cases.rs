@@ -191,14 +191,24 @@ pub struct CreateAccountRequest {
 pub struct CreateTransactionRequest {
     /// Holds the affected account identifier.
     pub account_id: String,
+    /// Holds the optional budget identifier associated with the entry.
+    pub budget_id: Option<String>,
     /// Holds the optional budget category identifier.
     pub category_id: Option<String>,
+    /// Identifies whether the entry is income or an expense.
+    pub entry_type: String,
     /// Holds the exact signed amount in minor units.
     pub minor_units: i64,
     /// Holds the accompanying ISO-style currency code.
     pub currency: String,
     /// Holds the canonical local transaction date.
     pub occurred_on: String,
+    /// Holds an optional counterparty name.
+    pub payee: Option<String>,
+    /// Holds an optional short description.
+    pub description: Option<String>,
+    /// Holds optional long-form notes.
+    pub notes: Option<String>,
 }
 
 /// Holds the user-entered fields required to record a transfer atomically.

@@ -8,8 +8,8 @@ pub mod security;
 use crate::application::ApplicationError;
 use crate::commands::finance::{
     archive_account, archive_budget, archive_category, create_account, create_budget,
-    create_category, list_accounts, list_budgets, list_categories, update_account, update_budget,
-    update_category,
+    create_category, create_transaction, list_accounts, list_budgets, list_categories,
+    update_account, update_budget, update_category,
 };
 use crate::commands::profile::{
     create_profile, get_session_status, list_profiles, lock_profile, record_session_activity,
@@ -52,7 +52,8 @@ pub fn run() {
             list_accounts,
             create_account,
             update_account,
-            archive_account
+            archive_account,
+            create_transaction
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

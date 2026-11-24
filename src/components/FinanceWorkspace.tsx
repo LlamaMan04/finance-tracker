@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AccountDto, BudgetDto, CategoryDto } from "../api/contracts";
+import type { AccountDto, BudgetDto, CategoryDto, TransactionDto } from "../api/contracts";
 import { FinanceCommandClient } from "../api/commandClient";
 import { ErrorNotice } from "./ErrorNotice";
 
@@ -27,6 +27,12 @@ export function FinanceWorkspace({
   const [categories, setCategories] = useState<CategoryDto[]>([]);
   /** Holds account DTOs returned by Rust for the active profile only. */
   const [accounts, setAccounts] = useState<AccountDto[]>([]);
+  /** Tracks the selected ledger kind so the category choices remain applicable. */
+  const [transactionKind, setTransactionKind] = useState<"income" | "expense">("expense");
+  /** Shows the Rust-normalized result of the current entry without implementing history yet. */
+  const [lastRecordedTransaction, setLastRecordedTransaction] = useState<TransactionDto | null>(
+    null,
+  );
   /** Holds a safe UI error and never raw backend diagnostics. */
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   /** Prevents duplicate finance submissions while a command is running. */
@@ -111,6 +117,32 @@ export function FinanceWorkspace({
         openingMinorUnits: String(values.get("openingMinorUnits") ?? ""),
       });
       form.reset();
+    });
+  }
+
+  /** Records one signed income or expense fact and displays only Rust's normalized response. */
+  function submitTransaction(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    /** Retains the form element beyond the submit event lifetime. */
+    const form = event.currentTarget;
+    /** Captures all form values synchronously before the async command begins. */
+    const values = new FormData(form);
+    void mutate(async () => {
+      const transaction = await commandClient.createTransaction({
+        accountId: String(values.get("transactionAccountId") ?? ""),
+        budgetId: String(values.get("transactionBudgetId") ?? "") || null,
+        categoryId: String(values.get("transactionCategoryId") ?? "") || null,
+        entryType: transactionKind,
+        minorUnits: String(values.get("transactionMinorUnits") ?? ""),
+        currency: String(values.get("transactionCurrency") ?? ""),
+        occurredOn: String(values.get("transactionOccurredOn") ?? ""),
+        payee: String(values.get("transactionPayee") ?? "") || null,
+        description: String(values.get("transactionDescription") ?? "") || null,
+        notes: String(values.get("transactionNotes") ?? "") || null,
+      });
+      setLastRecordedTransaction(transaction);
+      form.reset();
+      setTransactionKind("expense");
     });
   }
 
@@ -272,6 +304,89 @@ export function FinanceWorkspace({
           }
           onEdit={editAccount}
         />
+      </section>
+      <section aria-labelledby="transactions-heading" className="finance-section">
+        <h2 id="transactions-heading">Record income or expense</h2>
+        <p>Use positive minor units for income and negative minor units for expenses.</p>
+        <form onSubmit={submitTransaction}>
+          <label htmlFor="transaction-account">Account</label>
+          <select id="transaction-account" name="transactionAccountId" required>
+            <option value="">Choose an account</option>
+            {accounts
+              .filter((account) => !account.isArchived)
+              .map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name} ({account.currency})
+                </option>
+              ))}
+          </select>
+          <label htmlFor="transaction-kind">Type</label>
+          <select
+            id="transaction-kind"
+            name="transactionKind"
+            onChange={(event) =>
+              setTransactionKind(event.currentTarget.value as "income" | "expense")
+            }
+            value={transactionKind}
+          >
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+          </select>
+          <label htmlFor="transaction-category">Category (optional)</label>
+          <select id="transaction-category" name="transactionCategoryId">
+            <option value="">No category</option>
+            {categories
+              .filter(
+                (category) => !category.isArchived && category.categoryKind === transactionKind,
+              )
+              .map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+          </select>
+          <label htmlFor="transaction-budget">Budget (optional)</label>
+          <select id="transaction-budget" name="transactionBudgetId">
+            <option value="">No budget</option>
+            {budgets
+              .filter((budget) => !budget.isArchived)
+              .map((budget) => (
+                <option key={budget.id} value={budget.id}>
+                  {budget.name} ({budget.currency})
+                </option>
+              ))}
+          </select>
+          <label htmlFor="transaction-minor-units">Amount (minor units)</label>
+          <input
+            id="transaction-minor-units"
+            inputMode="numeric"
+            name="transactionMinorUnits"
+            required
+          />
+          <label htmlFor="transaction-currency">Currency</label>
+          <input
+            defaultValue="USD"
+            id="transaction-currency"
+            maxLength={3}
+            name="transactionCurrency"
+            required
+          />
+          <label htmlFor="transaction-occurred-on">Date</label>
+          <input id="transaction-occurred-on" name="transactionOccurredOn" required type="date" />
+          <label htmlFor="transaction-payee">Payee (optional)</label>
+          <input id="transaction-payee" maxLength={200} name="transactionPayee" />
+          <label htmlFor="transaction-description">Description (optional)</label>
+          <input id="transaction-description" maxLength={500} name="transactionDescription" />
+          <label htmlFor="transaction-notes">Notes (optional)</label>
+          <textarea id="transaction-notes" maxLength={4000} name="transactionNotes" />
+          <button disabled={disabled}>Record transaction</button>
+        </form>
+        {lastRecordedTransaction !== null && (
+          <p aria-live="polite">
+            Recorded {lastRecordedTransaction.entryType} of {lastRecordedTransaction.minorUnits}{" "}
+            {lastRecordedTransaction.currency} on {lastRecordedTransaction.occurredOn}.
+          </p>
+        )}
       </section>
     </section>
   );

@@ -135,6 +135,8 @@ export interface TransactionDto {
   id: string;
   /** Holds the affected account identifier. */
   accountId: string;
+  /** Holds the optional budget selected for the entry. */
+  budgetId: string | null;
   /** Holds the optional category identifier. */
   categoryId: string | null;
   /** Stores exact minor units as a decimal string to avoid JavaScript precision loss. */
@@ -145,4 +147,34 @@ export interface TransactionDto {
   occurredOn: string;
   /** Identifies the normalized ledger entry type. */
   entryType: string;
+  /** Holds the optional counterparty name supplied for display. */
+  payee: string | null;
+  /** Holds the optional short description supplied for display. */
+  description: string | null;
+  /** Holds optional long-form notes supplied for display. */
+  notes: string | null;
+}
+
+/** Carries untrusted income or expense data to the Rust command boundary. */
+export interface TransactionInput {
+  /** Identifies the active-profile account receiving the entry. */
+  accountId: string;
+  /** Optionally associates the entry with an active compatible budget. */
+  budgetId: string | null;
+  /** Optionally associates the entry with an active category of the same kind. */
+  categoryId: string | null;
+  /** Restricts the initial ledger slice to income and expense facts. */
+  entryType: "income" | "expense";
+  /** Stores an exact signed minor-unit amount without JavaScript number conversion. */
+  minorUnits: string;
+  /** Supplies the account's uppercase ISO-style currency code. */
+  currency: string;
+  /** Supplies a canonical local calendar date. */
+  occurredOn: string;
+  /** Supplies an optional counterparty name. */
+  payee: string | null;
+  /** Supplies an optional short description. */
+  description: string | null;
+  /** Supplies optional long-form notes. */
+  notes: string | null;
 }
