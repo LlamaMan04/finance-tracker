@@ -44,6 +44,8 @@ pub struct CategoryDto {
     pub id: String,
     /// Holds the user-visible category name.
     pub name: String,
+    /// Identifies whether this category classifies income or expenses.
+    pub category_kind: String,
     /// Retains a presentation color only; financial meaning must not rely on it.
     pub color: Option<String>,
     /// Preserves deterministic category ordering.
@@ -60,8 +62,12 @@ pub struct AccountDto {
     pub id: String,
     /// Holds the user-visible account name.
     pub name: String,
+    /// Holds the approved account type used for presentation and later workflows.
+    pub account_type: String,
     /// Holds the account's ISO-style currency code.
     pub currency: String,
+    /// Stores the opening balance as an exact string for JavaScript safety.
+    pub opening_minor_units: String,
     /// Marks whether the account remains available for new transactions.
     pub is_archived: bool,
 }

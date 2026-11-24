@@ -1,6 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ApiErrorPayload,
+  AccountDto,
+  AccountInput,
+  AccountUpdateInput,
+  BudgetDto,
+  BudgetInput,
+  BudgetUpdateInput,
+  CategoryDto,
+  CategoryInput,
+  CategoryUpdateInput,
   CreateProfileInput,
   ProfileSummary,
   SessionStatus,
@@ -42,6 +51,57 @@ export class FinanceCommandClient {
   /** Locks any active session before selecting another profile for unlock. */
   async switchProfile(profileId: string): Promise<SessionStatus> {
     return this.invokeCommand<SessionStatus>("switch_profile", { profileId });
+  }
+
+  /** Lists the active profile's protected budgets. */
+  async listBudgets(): Promise<BudgetDto[]> {
+    return this.invokeCommand<BudgetDto[]>("list_budgets");
+  }
+  /** Creates a protected budget. */
+  async createBudget(request: BudgetInput): Promise<BudgetDto> {
+    return this.invokeCommand<BudgetDto>("create_budget", { request });
+  }
+  /** Updates a protected budget. */
+  async updateBudget(request: BudgetUpdateInput): Promise<BudgetDto> {
+    return this.invokeCommand<BudgetDto>("update_budget", { request });
+  }
+  /** Archives a protected budget. */
+  async archiveBudget(id: string): Promise<void> {
+    await this.invokeCommand<void>("archive_budget", { id });
+  }
+
+  /** Lists the active profile's protected categories. */
+  async listCategories(): Promise<CategoryDto[]> {
+    return this.invokeCommand<CategoryDto[]>("list_categories");
+  }
+  /** Creates a protected category. */
+  async createCategory(request: CategoryInput): Promise<CategoryDto> {
+    return this.invokeCommand<CategoryDto>("create_category", { request });
+  }
+  /** Updates a protected category. */
+  async updateCategory(request: CategoryUpdateInput): Promise<CategoryDto> {
+    return this.invokeCommand<CategoryDto>("update_category", { request });
+  }
+  /** Archives a protected category. */
+  async archiveCategory(id: string): Promise<void> {
+    await this.invokeCommand<void>("archive_category", { id });
+  }
+
+  /** Lists the active profile's protected accounts. */
+  async listAccounts(): Promise<AccountDto[]> {
+    return this.invokeCommand<AccountDto[]>("list_accounts");
+  }
+  /** Creates a protected account. */
+  async createAccount(request: AccountInput): Promise<AccountDto> {
+    return this.invokeCommand<AccountDto>("create_account", { request });
+  }
+  /** Updates a protected account. */
+  async updateAccount(request: AccountUpdateInput): Promise<AccountDto> {
+    return this.invokeCommand<AccountDto>("update_account", { request });
+  }
+  /** Archives a protected account. */
+  async archiveAccount(id: string): Promise<void> {
+    await this.invokeCommand<void>("archive_account", { id });
   }
 
   /** Converts unknown Tauri failures into the reviewed frontend error shape. */

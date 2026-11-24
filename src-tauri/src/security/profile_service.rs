@@ -159,6 +159,8 @@ impl LocalProfileService {
             .key_deriver
             .derive_database_key(request.passphrase.as_slice(), &stored.encryption)?;
         let database = Database::open(&self.registry.database_path(&profile_id), &database_key)?;
+        // Backfill the protected scope for profiles created before finance repositories were added.
+        ensure_profile_scope(&database, &profile_id)?;
         self.refresh_credential_store(stored.credential_store_reference.as_deref(), &database_key);
 
         Ok(UnlockedSession { profile_id, _database_key: database_key, _database: database })
@@ -180,6 +182,22 @@ impl LocalProfileService {
                 self.credential_store.store_database_key(reference, key);
         }
     }
+}
+
+/// Ensures every authenticated profile has a local ownership scope before finance operations run.
+fn ensure_profile_scope(
+    database: &Database,
+    profile_id: &ProfileId,
+) -> Result<(), ApplicationError> {
+    database.in_transaction(|transaction| {
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO profile_scopes (id, created_at, updated_at) VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                [profile_id.as_str()],
+            )
+            .map_err(|_| ApplicationError::internal())?;
+        Ok(())
+    })
 }
 
 /// Removes one exact rollback target while tolerating an already-cleaned SQLite sidecar.
@@ -230,6 +248,16 @@ impl ProfileService for LocalProfileService {
         let database_key =
             self.key_deriver.derive_database_key(request.passphrase.as_slice(), &encryption)?;
         let database = Database::create(&self.registry.database_path(&profile_id), &database_key)?;
+        // Seed the protected profile scope before any finance repository can write scoped records.
+        database.in_transaction(|transaction| {
+            transaction
+                .execute(
+                    "INSERT INTO profile_scopes (id, created_at, updated_at) VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                    [profile_id.as_str()],
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            Ok(())
+        })?;
         let metadata_store = ProfileMetadataStore::new(self.registry.metadata_path(&profile_id));
         let stored_metadata = StoredProfileMetadata {
             profile_id: profile_id.as_str().to_owned(),
@@ -530,7 +558,7 @@ mod tests {
                 database.schema_version()
             })
             .expect("active profile authorizes its own database");
-        assert_eq!(schema_version, 1);
+        assert_eq!(schema_version, 3);
 
         service.lock().expect("profile locks");
         let relocked_error = service

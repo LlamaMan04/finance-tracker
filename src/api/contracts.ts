@@ -68,6 +68,8 @@ export interface CategoryDto {
   id: string;
   /** Holds the user-visible name. */
   name: string;
+  /** Identifies whether this category is for income or expenses. */
+  categoryKind: "income" | "expense";
   /** Holds an optional presentation color that never conveys finance meaning alone. */
   color: string | null;
   /** Preserves deterministic display ordering. */
@@ -82,10 +84,49 @@ export interface AccountDto {
   id: string;
   /** Holds the user-visible name. */
   name: string;
+  /** Identifies the initial account classification. */
+  accountType: "cash" | "checking" | "savings" | "credit_card" | "other";
   /** Holds the ISO-style currency code. */
   currency: string;
+  /** Stores the exact opening amount without JavaScript numeric conversion. */
+  openingMinorUnits: string;
   /** Marks whether the account is archived. */
   isArchived: boolean;
+}
+
+/** Carries new budget fields directly to the Rust command boundary. */
+export interface BudgetInput {
+  name: string;
+  currency: string;
+}
+/** Carries the mutable fields of an existing budget. */
+export interface BudgetUpdateInput {
+  id: string;
+  name: string;
+}
+/** Carries category fields directly to the Rust command boundary. */
+export interface CategoryInput {
+  name: string;
+  categoryKind: "income" | "expense";
+  color: string | null;
+  sortOrder: number;
+}
+/** Carries an existing category identity and replacement fields. */
+export interface CategoryUpdateInput extends CategoryInput {
+  id: string;
+}
+/** Carries account fields while preserving an exact opening amount string. */
+export interface AccountInput {
+  name: string;
+  accountType: AccountDto["accountType"];
+  currency: string;
+  openingMinorUnits: string;
+}
+/** Carries mutable account display fields. */
+export interface AccountUpdateInput {
+  id: string;
+  name: string;
+  accountType: AccountDto["accountType"];
 }
 
 /** Describes a normalized future transaction response without doing financial math in the UI. */

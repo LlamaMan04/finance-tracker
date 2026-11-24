@@ -42,6 +42,8 @@ pub trait ProfileService {
 
 /// Defines budget operations that will be implemented after secure sessions exist.
 pub trait BudgetService {
+    /// Lists budgets available in the authenticated profile, including archived history.
+    fn list(&self, scope: &ProfileScope) -> Result<Vec<BudgetDto>, ApplicationError>;
     /// Creates one budget within the authenticated profile scope.
     fn create(
         &self,
@@ -55,6 +57,8 @@ pub trait BudgetService {
 
 /// Defines category operations that will be implemented after secure sessions exist.
 pub trait CategoryService {
+    /// Lists categories in their deterministic display order.
+    fn list(&self, scope: &ProfileScope) -> Result<Vec<CategoryDto>, ApplicationError>;
     /// Creates one category within the authenticated profile scope.
     fn create(
         &self,
@@ -72,6 +76,8 @@ pub trait CategoryService {
 
 /// Defines account operations that will be implemented after secure sessions exist.
 pub trait AccountService {
+    /// Lists accounts in the authenticated profile, including archived history.
+    fn list(&self, scope: &ProfileScope) -> Result<Vec<AccountDto>, ApplicationError>;
     /// Creates one account within the authenticated profile scope.
     fn create(
         &self,
