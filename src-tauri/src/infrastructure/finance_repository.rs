@@ -1,10 +1,14 @@
 //! Profile-scoped SQLite persistence for the first finance workspace slice.
 
 use crate::application::ApplicationError;
-use crate::application::contracts::{AccountDto, BudgetDto, CategoryDto, TransactionDto};
+use crate::application::contracts::{
+    AccountDto, AllocationDto, BudgetDto, CategoryDto, TransactionDto,
+};
+use crate::application::use_cases::TransactionAllocationRequest;
 use crate::domain::{AccountId, BudgetId, CategoryId, CurrencyCode, LocalDate, ProfileScope};
 use crate::infrastructure::database::Database;
 use rusqlite::{Row, params};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// Reads or writes the protected reference data that transactions will later reference.
@@ -234,6 +238,7 @@ impl FinanceRepository {
         payee: Option<&str>,
         description: Option<&str>,
         notes: Option<&str>,
+        allocations: &[TransactionAllocationRequest],
     ) -> Result<TransactionDto, ApplicationError> {
         let account_id = AccountId::parse(account_id)?;
         let budget_id = budget_id.map(BudgetId::parse).transpose()?;
@@ -244,16 +249,41 @@ impl FinanceRepository {
         let payee = validate_optional_text(payee, 200)?;
         let description = validate_optional_text(description, 500)?;
         let notes = validate_optional_text(notes, 4_000)?;
+        let allocations = validate_allocation_requests(
+            allocations,
+            category_id.as_ref(),
+            entry_type,
+            minor_units,
+        )?;
         let id = new_id("transaction");
 
         database.in_transaction(|transaction| {
             validate_active_account(transaction, scope, &account_id, &currency)?;
             validate_active_category(transaction, scope, category_id.as_ref(), entry_type)?;
             validate_active_budget(transaction, scope, budget_id.as_ref(), &currency)?;
+            for allocation in &allocations {
+                validate_active_category(transaction, scope, Some(&allocation.category_id), entry_type)?;
+            }
             transaction.execute(
                 "INSERT INTO transactions (id, profile_id, account_id, budget_id, category_id, occurred_on, entry_type, minor_units, currency, payee, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
                 params![id, scope.profile_id().as_str(), account_id.as_str(), budget_id.as_ref().map(|value| value.as_str()), category_id.as_ref().map(|value| value.as_str()), occurred_on, entry_type, minor_units, currency.as_str(), payee, description, notes],
             ).map_err(|_| ApplicationError::conflict())?;
+            let allocation_dtos = allocations
+                .iter()
+                .map(|allocation| {
+                    let allocation_id = new_id("allocation");
+                    transaction.execute(
+                        "INSERT INTO transaction_allocations (id, profile_id, transaction_id, category_id, minor_units, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                        params![allocation_id, scope.profile_id().as_str(), id, allocation.category_id.as_str(), allocation.minor_units],
+                    ).map_err(|_| ApplicationError::conflict())?;
+                    Ok(AllocationDto {
+                        id: allocation_id,
+                        transaction_id: id.clone(),
+                        category_id: allocation.category_id.as_str().to_owned(),
+                        minor_units: allocation.minor_units.to_string(),
+                    })
+                })
+                .collect::<Result<Vec<_>, ApplicationError>>()?;
             Ok(TransactionDto {
                 id,
                 account_id: account_id.as_str().to_owned(),
@@ -266,9 +296,49 @@ impl FinanceRepository {
                 payee,
                 description,
                 notes,
+                allocations: allocation_dtos,
             })
         })
     }
+}
+
+/// Validates a complete split before any ledger write so the transaction and its portions commit together.
+fn validate_allocation_requests(
+    allocations: &[TransactionAllocationRequest],
+    category_id: Option<&CategoryId>,
+    entry_type: &str,
+    transaction_minor_units: i64,
+) -> Result<Vec<ValidatedAllocation>, ApplicationError> {
+    if allocations.is_empty() {
+        return Ok(vec![]);
+    }
+    if category_id.is_some() {
+        return Err(ApplicationError::validation());
+    }
+
+    let mut category_ids = HashSet::new();
+    let mut total = 0_i64;
+    let mut validated = Vec::with_capacity(allocations.len());
+    for allocation in allocations {
+        let category_id = CategoryId::parse(&allocation.category_id)?;
+        validate_entry_amount(entry_type, allocation.minor_units)?;
+        if !category_ids.insert(category_id.as_str().to_owned()) {
+            return Err(ApplicationError::validation());
+        }
+        total =
+            total.checked_add(allocation.minor_units).ok_or_else(ApplicationError::validation)?;
+        validated.push(ValidatedAllocation { category_id, minor_units: allocation.minor_units });
+    }
+    if total != transaction_minor_units {
+        return Err(ApplicationError::validation());
+    }
+    Ok(validated)
+}
+
+/// Keeps parsed identifiers and exact amounts together after untrusted allocation input is validated.
+struct ValidatedAllocation {
+    category_id: CategoryId,
+    minor_units: i64,
 }
 
 /// Confirms an entry has the only supported ledger types and their unambiguous sign convention.
@@ -455,6 +525,7 @@ fn account_from_row(row: &Row<'_>) -> rusqlite::Result<AccountDto> {
 #[cfg(test)]
 mod tests {
     use super::FinanceRepository;
+    use crate::application::use_cases::TransactionAllocationRequest;
     use crate::domain::{ProfileId, ProfileScope};
     use crate::infrastructure::test_support::TemporaryDatabase;
     use crate::ports::security::KeyDerivationPort;
@@ -587,6 +658,7 @@ mod tests {
             Some("Employer"),
             Some("February salary"),
             Some("Leap-day payment"),
+            &[],
         )
         .expect("income transaction is created");
         let wrong_sign = FinanceRepository::create_transaction(
@@ -602,6 +674,7 @@ mod tests {
             None,
             None,
             None,
+            &[],
         )
         .expect_err("expenses require a negative amount");
         let wrong_category = FinanceRepository::create_transaction(
@@ -617,6 +690,7 @@ mod tests {
             None,
             None,
             None,
+            &[],
         )
         .expect_err("categories must match the entry kind");
 
@@ -627,5 +701,100 @@ mod tests {
         assert_eq!(income.payee, Some("Employer".to_owned()));
         assert_eq!(wrong_sign.code, crate::application::ErrorCode::Validation);
         assert_eq!(wrong_category.code, crate::application::ErrorCode::Validation);
+    }
+
+    /// Proves a split entry persists every portion atomically and rejects invalid total/category mixes.
+    #[test]
+    fn creates_atomic_category_splits() {
+        let (_fixture, database, scope) = fixture();
+        let groceries =
+            FinanceRepository::create_category(&database, &scope, "Groceries", "expense", None, 1)
+                .expect("groceries category is created");
+        let dining =
+            FinanceRepository::create_category(&database, &scope, "Dining", "expense", None, 2)
+                .expect("dining category is created");
+        let income =
+            FinanceRepository::create_category(&database, &scope, "Salary", "income", None, 3)
+                .expect("income category is created");
+        let account =
+            FinanceRepository::create_account(&database, &scope, "Checking", "checking", "USD", 0)
+                .expect("account is created");
+        let allocations = vec![
+            TransactionAllocationRequest { category_id: groceries.id.clone(), minor_units: -700 },
+            TransactionAllocationRequest { category_id: dining.id.clone(), minor_units: -300 },
+        ];
+
+        let transaction = FinanceRepository::create_transaction(
+            &database,
+            &scope,
+            &account.id,
+            None,
+            None,
+            "expense",
+            -1_000,
+            "USD",
+            "2026-11-23",
+            None,
+            Some("Shared shop"),
+            None,
+            &allocations,
+        )
+        .expect("split transaction is created");
+        let invalid_total = FinanceRepository::create_transaction(
+            &database,
+            &scope,
+            &account.id,
+            None,
+            None,
+            "expense",
+            -1_000,
+            "USD",
+            "2026-11-23",
+            None,
+            None,
+            None,
+            &[TransactionAllocationRequest {
+                category_id: groceries.id.clone(),
+                minor_units: -999,
+            }],
+        )
+        .expect_err("split totals must equal the transaction");
+        let invalid_category = FinanceRepository::create_transaction(
+            &database,
+            &scope,
+            &account.id,
+            None,
+            None,
+            "expense",
+            -1_000,
+            "USD",
+            "2026-11-23",
+            None,
+            None,
+            None,
+            &[TransactionAllocationRequest { category_id: income.id, minor_units: -1_000 }],
+        )
+        .expect_err("split categories must match the transaction kind");
+
+        assert_eq!(transaction.category_id, None);
+        assert_eq!(transaction.allocations.len(), 2);
+        assert_eq!(transaction.allocations[0].minor_units, "-700");
+        assert_eq!(transaction.allocations[1].category_id, dining.id);
+        assert_eq!(invalid_total.code, crate::application::ErrorCode::Validation);
+        assert_eq!(invalid_category.code, crate::application::ErrorCode::Validation);
+        database
+            .in_transaction(|database_transaction| {
+                // Confirms both rejected requests left no extra ledger or split rows behind.
+                let transaction_count: i64 = database_transaction
+                    .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+                    .map_err(|_| crate::application::ApplicationError::internal())?;
+                let allocation_count: i64 = database_transaction
+                    .query_row("SELECT COUNT(*) FROM transaction_allocations", [], |row| row.get(0))
+                    .map_err(|_| crate::application::ApplicationError::internal())?;
+                assert_eq!(transaction_count, 1);
+                assert_eq!(allocation_count, 2);
+                Ok(())
+            })
+            .expect("rejected splits leave no partial records");
     }
 }

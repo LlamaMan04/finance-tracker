@@ -229,6 +229,16 @@ pub struct CreateTransactionRequest {
     pub description: Option<String>,
     /// Holds optional long-form notes.
     pub notes: Option<String>,
+    /// Holds category splits that must total the transaction amount exactly.
+    pub allocations: Vec<TransactionAllocationRequest>,
+}
+
+/// Holds one exact category portion of a new immutable transaction.
+pub struct TransactionAllocationRequest {
+    /// Holds the category receiving this portion of the transaction.
+    pub category_id: String,
+    /// Holds the signed portion in the same direction as the transaction.
+    pub minor_units: i64,
 }
 
 /// Holds the fields required to create or replace one period/category budget plan.

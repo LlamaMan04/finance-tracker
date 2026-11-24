@@ -4,6 +4,7 @@ use crate::application::ApplicationError;
 use crate::application::contracts::{
     AccountDto, BudgetAllocationDto, BudgetDto, CategoryDto, TransactionDto,
 };
+use crate::application::use_cases::TransactionAllocationRequest;
 use crate::commands::safe_error;
 use crate::infrastructure::budget_allocation_repository::BudgetAllocationRepository;
 use crate::infrastructure::finance_repository::FinanceRepository;
@@ -93,6 +94,15 @@ pub struct TransactionInput {
     pub payee: Option<String>,
     pub description: Option<String>,
     pub notes: Option<String>,
+    pub allocations: Vec<TransactionAllocationInput>,
+}
+
+/// Accepts one untrusted signed category split for a new immutable transaction.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionAllocationInput {
+    pub category_id: String,
+    pub minor_units: String,
 }
 
 /// Lists protected budgets only after the active profile has authenticated.
@@ -333,6 +343,22 @@ pub fn create_transaction(
         .minor_units
         .parse::<i64>()
         .map_err(|_| safe_error(ApplicationError::validation()))?;
+    // Parse every exact integer before opening the database transaction so malformed UI input
+    // cannot create a partial ledger record.
+    let allocations = request
+        .allocations
+        .into_iter()
+        .map(|allocation| {
+            allocation
+                .minor_units
+                .parse::<i64>()
+                .map(|minor_units| TransactionAllocationRequest {
+                    category_id: allocation.category_id,
+                    minor_units,
+                })
+                .map_err(|_| safe_error(ApplicationError::validation()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     service
         .with_active_profile(|scope, database| {
             FinanceRepository::create_transaction(
@@ -348,6 +374,7 @@ pub fn create_transaction(
                 request.payee.as_deref(),
                 request.description.as_deref(),
                 request.notes.as_deref(),
+                &allocations,
             )
         })
         .map_err(safe_error)

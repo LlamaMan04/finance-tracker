@@ -179,6 +179,28 @@ export interface TransactionDto {
   description: string | null;
   /** Holds optional long-form notes supplied for display. */
   notes: string | null;
+  /** Holds category splits recorded atomically with this immutable transaction. */
+  allocations: TransactionAllocationDto[];
+}
+
+/** Describes one normalized category portion of a transaction. */
+export interface TransactionAllocationDto {
+  /** Holds the stable allocation identifier. */
+  id: string;
+  /** Holds the owning transaction identifier. */
+  transactionId: string;
+  /** Holds the category receiving the amount. */
+  categoryId: string;
+  /** Stores exact signed minor units without JavaScript numeric conversion. */
+  minorUnits: string;
+}
+
+/** Carries one exact category split to the Rust transaction command. */
+export interface TransactionAllocationInput {
+  /** Identifies an active category of the same kind as the transaction. */
+  categoryId: string;
+  /** Supplies a signed portion in the same direction as the transaction. */
+  minorUnits: string;
 }
 
 /** Carries untrusted income or expense data to the Rust command boundary. */
@@ -203,4 +225,6 @@ export interface TransactionInput {
   description: string | null;
   /** Supplies optional long-form notes. */
   notes: string | null;
+  /** Supplies optional category splits which must total the transaction exactly. */
+  allocations: TransactionAllocationInput[];
 }

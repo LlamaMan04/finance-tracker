@@ -20,6 +20,13 @@ interface FinanceWorkspaceProps {
   onSwitchProfile: () => void;
 }
 
+/** Holds one UI-only row until Rust atomically records the transaction split. */
+interface AllocationRow {
+  id: string;
+  categoryId: string;
+  minorUnits: string;
+}
+
 /** Renders the first protected finance workflows: budgets, categories, and accounts. */
 export function FinanceWorkspace({
   profileId,
@@ -37,6 +44,10 @@ export function FinanceWorkspace({
   const [budgetAllocations, setBudgetAllocations] = useState<BudgetAllocationDto[]>([]);
   /** Tracks the selected ledger kind so the category choices remain applicable. */
   const [transactionKind, setTransactionKind] = useState<"income" | "expense">("expense");
+  /** Chooses whether the entry uses one category or exact category portions. */
+  const [isSplitTransaction, setIsSplitTransaction] = useState(false);
+  /** Holds unsubmitted split rows and is cleared immediately after a successful record. */
+  const [allocationRows, setAllocationRows] = useState<AllocationRow[]>([]);
   /** Shows the Rust-normalized result of the current entry without implementing history yet. */
   const [lastRecordedTransaction, setLastRecordedTransaction] = useState<TransactionDto | null>(
     null,
@@ -169,11 +180,40 @@ export function FinanceWorkspace({
         payee: String(values.get("transactionPayee") ?? "") || null,
         description: String(values.get("transactionDescription") ?? "") || null,
         notes: String(values.get("transactionNotes") ?? "") || null,
+        allocations: isSplitTransaction
+          ? allocationRows.map(({ categoryId, minorUnits }) => ({ categoryId, minorUnits }))
+          : [],
       });
       setLastRecordedTransaction(transaction);
       form.reset();
       setTransactionKind("expense");
+      setIsSplitTransaction(false);
+      setAllocationRows([]);
     });
+  }
+
+  /** Adds an empty split row without calculating or validating financial values in the UI. */
+  function addAllocationRow() {
+    setAllocationRows((rows) => [
+      ...rows,
+      { id: crypto.randomUUID(), categoryId: "", minorUnits: "" },
+    ]);
+  }
+
+  /** Updates one transient split field while Rust remains the authoritative validator. */
+  function updateAllocationRow(
+    id: string,
+    field: "categoryId" | "minorUnits",
+    value: string,
+  ) {
+    setAllocationRows((rows) =>
+      rows.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
+    );
+  }
+
+  /** Removes a not-yet-recorded split row without altering protected ledger history. */
+  function removeAllocationRow(id: string) {
+    setAllocationRows((rows) => rows.filter((row) => row.id !== id));
   }
 
   /** Uses concise native prompts for the initial edit workflow while commands retain validation. */
@@ -424,27 +464,87 @@ export function FinanceWorkspace({
           <select
             id="transaction-kind"
             name="transactionKind"
-            onChange={(event) =>
-              setTransactionKind(event.currentTarget.value as "income" | "expense")
-            }
+            onChange={(event) => {
+              setTransactionKind(event.currentTarget.value as "income" | "expense");
+              setAllocationRows((rows) => rows.map((row) => ({ ...row, categoryId: "" })));
+            }}
             value={transactionKind}
           >
             <option value="expense">Expense</option>
             <option value="income">Income</option>
           </select>
-          <label htmlFor="transaction-category">Category (optional)</label>
-          <select id="transaction-category" name="transactionCategoryId">
-            <option value="">No category</option>
-            {categories
-              .filter(
-                (category) => !category.isArchived && category.categoryKind === transactionKind,
-              )
-              .map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
+          <label>
+            <input
+              checked={isSplitTransaction}
+              onChange={(event) => {
+                setIsSplitTransaction(event.currentTarget.checked);
+                if (event.currentTarget.checked && allocationRows.length === 0) addAllocationRow();
+              }}
+              type="checkbox"
+            />{" "}
+            Split this transaction across categories
+          </label>
+          {!isSplitTransaction && (
+            <>
+              <label htmlFor="transaction-category">Category (optional)</label>
+              <select id="transaction-category" name="transactionCategoryId">
+                <option value="">No category</option>
+                {categories
+                  .filter(
+                    (category) =>
+                      !category.isArchived && category.categoryKind === transactionKind,
+                  )
+                  .map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+              </select>
+            </>
+          )}
+          {isSplitTransaction && (
+            <fieldset>
+              <legend>Category splits</legend>
+              <p>Each amount must use the transaction sign, and all splits must equal its amount.</p>
+              {allocationRows.map((row, index) => (
+                <div key={row.id}>
+                  <label htmlFor={`split-category-${row.id}`}>Split {index + 1} category</label>
+                  <select
+                    id={`split-category-${row.id}`}
+                    onChange={(event) => updateAllocationRow(row.id, "categoryId", event.currentTarget.value)}
+                    required
+                    value={row.categoryId}
+                  >
+                    <option value="">Choose a category</option>
+                    {categories
+                      .filter(
+                        (category) =>
+                          !category.isArchived && category.categoryKind === transactionKind,
+                      )
+                      .map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                  </select>
+                  <label htmlFor={`split-amount-${row.id}`}>Split {index + 1} amount (minor units)</label>
+                  <input
+                    id={`split-amount-${row.id}`}
+                    inputMode="numeric"
+                    onChange={(event) => updateAllocationRow(row.id, "minorUnits", event.currentTarget.value)}
+                    required
+                    value={row.minorUnits}
+                  />
+                  <button disabled={disabled} onClick={() => removeAllocationRow(row.id)} type="button">
+                    Remove split {index + 1}
+                  </button>
+                </div>
               ))}
-          </select>
+              <button disabled={disabled} onClick={addAllocationRow} type="button">
+                Add category split
+              </button>
+            </fieldset>
+          )}
           <label htmlFor="transaction-budget">Budget (optional)</label>
           <select id="transaction-budget" name="transactionBudgetId">
             <option value="">No budget</option>
@@ -484,7 +584,11 @@ export function FinanceWorkspace({
         {lastRecordedTransaction !== null && (
           <p aria-live="polite">
             Recorded {lastRecordedTransaction.entryType} of {lastRecordedTransaction.minorUnits}{" "}
-            {lastRecordedTransaction.currency} on {lastRecordedTransaction.occurredOn}.
+            {lastRecordedTransaction.currency} on {lastRecordedTransaction.occurredOn}
+            {lastRecordedTransaction.allocations.length > 0
+              ? ` across ${lastRecordedTransaction.allocations.length} categories`
+              : ""}
+            .
           </p>
         )}
       </section>

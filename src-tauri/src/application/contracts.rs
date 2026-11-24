@@ -118,6 +118,8 @@ pub struct TransactionDto {
     pub description: Option<String>,
     /// Holds the optional long-form note supplied for display.
     pub notes: Option<String>,
+    /// Holds the exact category splits recorded atomically with this entry.
+    pub allocations: Vec<AllocationDto>,
 }
 
 /// Carries a transaction-to-budget allocation without financial calculation logic in the UI.
@@ -179,6 +181,7 @@ mod tests {
             payee: None,
             description: None,
             notes: None,
+            allocations: vec![],
         })
         .expect("transaction DTO must serialize for commands");
 
