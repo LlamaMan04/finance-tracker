@@ -200,7 +200,7 @@ mod tests {
         let key = test_key();
         let database = Database::create(fixture.path(), &key).expect("database initializes");
 
-        assert_eq!(database.schema_version().expect("schema version is readable"), 2);
+        assert_eq!(database.schema_version().expect("schema version is readable"), 3);
         database.with_connection(|connection| {
             let metadata_table_count: u32 = connection
                 .query_row(
@@ -219,6 +219,15 @@ mod tests {
                 )
                 .expect("SQLite metadata query succeeds");
             assert_eq!(finance_table_count, 1);
+
+            let credit_card_table_count: u32 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'credit_card_details'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("SQLite metadata query succeeds");
+            assert_eq!(credit_card_table_count, 1);
         });
     }
 
@@ -259,13 +268,59 @@ mod tests {
         drop(first);
         let reopened = Database::open(fixture.path(), &key).expect("reopening database succeeds");
 
-        assert_eq!(reopened.schema_version().expect("schema version is readable"), 2);
+        assert_eq!(reopened.schema_version().expect("schema version is readable"), 3);
         reopened.with_connection(|connection| {
             let migration_count: u32 = connection
                 .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
                 .expect("migration count query succeeds");
-            assert_eq!(migration_count, 2);
+            assert_eq!(migration_count, 3);
         });
+    }
+
+    /// Proves card terms belong only to a credit-card account in the same profile scope.
+    #[test]
+    fn permits_credit_card_details_only_for_credit_card_accounts() {
+        let fixture = TemporaryDatabase::new();
+        let key = test_key();
+        let database = Database::create(fixture.path(), &key).expect("database initializes");
+
+        let result = database.in_transaction(|transaction| {
+            let timestamp = "2026-11-23T00:00:00Z";
+            transaction
+                .execute(
+                    "INSERT INTO profile_scopes (id, created_at, updated_at) VALUES (?1, ?2, ?2)",
+                    ("profile-a", timestamp),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO accounts (id, profile_id, name, account_type, currency, opening_minor_units, is_archived, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    ("card-a", "profile-a", "Everyday Card", "credit_card", "USD", 0_i64, 0_i64, timestamp),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO accounts (id, profile_id, name, account_type, currency, opening_minor_units, is_archived, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    ("checking-a", "profile-a", "Checking", "checking", "USD", 0_i64, 0_i64, timestamp),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO credit_card_details (profile_id, account_id, credit_limit_minor_units, statement_closing_day, payment_due_day, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                    ("profile-a", "card-a", 500_000_i64, 15_i64, 10_i64, timestamp),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+
+            let non_card_insert = transaction.execute(
+                "INSERT INTO credit_card_details (profile_id, account_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
+                ("profile-a", "checking-a", timestamp),
+            );
+            assert!(non_card_insert.is_err());
+
+            Ok(())
+        });
+
+        assert!(result.is_ok());
     }
 
     /// Proves the finance schema rejects records that cross an authenticated profile boundary.

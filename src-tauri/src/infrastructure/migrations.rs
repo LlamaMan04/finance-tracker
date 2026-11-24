@@ -11,7 +11,7 @@ pub(super) struct Migration {
 }
 
 /// Lists every released migration in the only order in which they may run.
-const MIGRATIONS: [Migration; 2] = [
+const MIGRATIONS: [Migration; 3] = [
     Migration {
         version: 1,
         name: "bootstrap_schema",
@@ -22,6 +22,12 @@ const MIGRATIONS: [Migration; 2] = [
         version: 2,
         name: "core_finance_schema",
         sql: include_str!("migrations/0002_core_finance_schema.sql"),
+    },
+    // Adds optional card terms without creating a second balance or transaction ledger.
+    Migration {
+        version: 3,
+        name: "credit_card_details",
+        sql: include_str!("migrations/0003_credit_card_details.sql"),
     },
 ];
 
