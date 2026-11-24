@@ -1,10 +1,14 @@
 //! Validation helpers for the future profile setup and unlock command adapters.
 
 use crate::application::ApplicationError;
-use crate::application::contracts::SessionStatusDto;
+use crate::application::contracts::{ProfileSummaryDto, SessionStatusDto};
+use crate::application::use_cases::ProfileService;
 use crate::application::use_cases::{CreateProfileRequest, UnlockProfileRequest};
+use crate::commands::safe_error;
 use crate::domain::ProfileId;
+use crate::security::LocalProfileService;
 use serde::Deserialize;
+use tauri::State;
 use zeroize::Zeroizing;
 
 /// Accepts the untrusted fields supplied to the future create-profile command.
@@ -86,7 +90,69 @@ fn validate_non_empty_passphrase(value: &str) -> Result<(), ApplicationError> {
 
 /// Supplies the safe locked state used by the future status command before any profile is active.
 pub fn locked_session_status() -> SessionStatusDto {
-    SessionStatusDto { profile_id: None, is_locked: true }
+    SessionStatusDto { profile_id: None, is_locked: true, inactivity_timeout_milliseconds: None }
+}
+
+/// Returns setup, locked, or unlocked state without opening protected data.
+#[tauri::command]
+pub fn get_session_status(
+    service: State<'_, LocalProfileService>,
+) -> Result<SessionStatusDto, ApplicationError> {
+    service.session_status().map_err(safe_error)
+}
+
+/// Lists non-secret local profiles without opening any protected database.
+#[tauri::command]
+pub fn list_profiles(
+    service: State<'_, LocalProfileService>,
+) -> Result<Vec<ProfileSummaryDto>, ApplicationError> {
+    service.list_profiles().map_err(safe_error)
+}
+
+/// Validates first-run input before creating an encrypted local profile.
+#[tauri::command]
+pub fn create_profile(
+    service: State<'_, LocalProfileService>,
+    request: CreateProfileCommandInput,
+) -> Result<SessionStatusDto, ApplicationError> {
+    let validated_request = request.into_request().map_err(safe_error)?;
+
+    service.create_profile(validated_request).map_err(safe_error)
+}
+
+/// Validates unlock input before any protected database is opened.
+#[tauri::command]
+pub fn unlock_profile(
+    service: State<'_, LocalProfileService>,
+    request: UnlockProfileCommandInput,
+) -> Result<SessionStatusDto, ApplicationError> {
+    let validated_request = request.into_request().map_err(safe_error)?;
+
+    service.unlock_profile(validated_request).map_err(safe_error)
+}
+
+/// Explicitly tears down the active protected session.
+#[tauri::command]
+pub fn lock_profile(service: State<'_, LocalProfileService>) -> Result<(), ApplicationError> {
+    service.lock().map_err(safe_error)
+}
+
+/// Records local interaction so an authenticated session can remain open within its idle policy.
+#[tauri::command]
+pub fn record_session_activity(
+    service: State<'_, LocalProfileService>,
+) -> Result<SessionStatusDto, ApplicationError> {
+    service.record_activity().map_err(safe_error)
+}
+
+/// Locks an active profile before selecting a known profile for its later unlock attempt.
+#[tauri::command]
+pub fn switch_profile(
+    service: State<'_, LocalProfileService>,
+    profile_id: String,
+) -> Result<SessionStatusDto, ApplicationError> {
+    validate_profile_id(&profile_id).map_err(safe_error)?;
+    service.switch_profile(profile_id).map_err(safe_error)
 }
 
 #[cfg(test)]

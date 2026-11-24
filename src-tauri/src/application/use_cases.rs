@@ -2,7 +2,8 @@
 
 use crate::application::ApplicationError;
 use crate::application::contracts::{
-    AccountDto, AllocationDto, BackupDto, BudgetDto, CategoryDto, SessionStatusDto, TransactionDto,
+    AccountDto, AllocationDto, BackupDto, BudgetDto, CategoryDto, ProfileSummaryDto,
+    SessionStatusDto, TransactionDto,
 };
 use crate::domain::{
     AccountId, AllocationId, BackupId, BudgetId, CategoryId, ProfileScope, TransactionId,
@@ -11,6 +12,9 @@ use zeroize::Zeroizing;
 
 /// Defines profile lifecycle operations without exposing passphrases or keys in responses.
 pub trait ProfileService {
+    /// Lists safe local profile summaries without opening protected databases.
+    fn list_profiles(&self) -> Result<Vec<ProfileSummaryDto>, ApplicationError>;
+
     /// Returns the selected profile's safe lock state.
     fn session_status(&self) -> Result<SessionStatusDto, ApplicationError>;
 
@@ -28,6 +32,12 @@ pub trait ProfileService {
 
     /// Drops the active protected session and its in-memory key material.
     fn lock(&self) -> Result<(), ApplicationError>;
+
+    /// Records verified local interaction or returns a locked status after the idle policy expires.
+    fn record_activity(&self) -> Result<SessionStatusDto, ApplicationError>;
+
+    /// Locks any active session and selects a known profile for a later unlock attempt.
+    fn switch_profile(&self, profile_id: String) -> Result<SessionStatusDto, ApplicationError>;
 }
 
 /// Defines budget operations that will be implemented after secure sessions exist.

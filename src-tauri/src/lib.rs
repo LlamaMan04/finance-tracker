@@ -6,24 +6,37 @@ pub mod ports;
 pub mod security;
 
 use crate::application::ApplicationError;
-use crate::infrastructure::database::ProtectedDatabaseLocation;
+use crate::commands::profile::{
+    create_profile, get_session_status, list_profiles, lock_profile, record_session_activity,
+    switch_profile, unlock_profile,
+};
+use crate::security::LocalProfileService;
 use std::error::Error;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Startup retains only the approved path; Phase 2 authentication must unlock the database.
+    // Startup retains only approved paths; the profile service does not open protected data.
     tauri::Builder::default()
         .setup(|app| {
-            let database_path = app
+            let application_data_path = app
                 .path()
                 .app_data_dir()
-                .map_err(|_| Box::<dyn Error>::from(ApplicationError::internal()))?
-                .join("finance-tracker.sqlite3");
+                .map_err(|_| Box::<dyn Error>::from(ApplicationError::internal()))?;
+            let profile_root = application_data_path.join("profiles");
 
-            app.manage(ProtectedDatabaseLocation::new(database_path));
+            app.manage(LocalProfileService::new(profile_root));
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            get_session_status,
+            list_profiles,
+            create_profile,
+            unlock_profile,
+            lock_profile,
+            record_session_activity,
+            switch_profile
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

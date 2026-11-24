@@ -59,3 +59,12 @@ pub trait KeyDerivationPort {
         metadata: &EncryptionMetadata,
     ) -> SecurityResult<DatabaseKey>;
 }
+
+/// Stores an optional OS-protected copy of a derived database key without replacing passphrase authorization.
+pub trait CredentialStorePort: Send + Sync {
+    /// Retrieves a key previously stored under a non-secret application-owned reference.
+    fn load_database_key(&self, reference: &str) -> SecurityResult<Option<DatabaseKey>>;
+
+    /// Persists a key under a non-secret application-owned reference when the operating system supports it.
+    fn store_database_key(&self, reference: &str, key: &DatabaseKey) -> SecurityResult<()>;
+}

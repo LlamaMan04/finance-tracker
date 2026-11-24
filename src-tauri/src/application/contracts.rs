@@ -10,6 +10,16 @@ pub struct SessionStatusDto {
     pub profile_id: Option<String>,
     /// Prevents the UI from assuming that protected repositories are accessible.
     pub is_locked: bool,
+    /// Exposes the active session's non-sensitive idle timeout for UI scheduling only.
+    pub inactivity_timeout_milliseconds: Option<u64>,
+}
+
+/// Identifies a selectable local profile without exposing protected contents or paths.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSummaryDto {
+    /// Holds the opaque profile identifier selected before authentication.
+    pub id: String,
 }
 
 /// Carries the non-secret budget fields that future commands will accept or display.
@@ -104,18 +114,20 @@ pub struct BackupDto {
 
 #[cfg(test)]
 mod tests {
-    use super::{SessionStatusDto, TransactionDto};
+    use super::{ProfileSummaryDto, SessionStatusDto, TransactionDto};
 
     #[test]
     fn serializes_safe_session_status_with_frontend_field_names() {
         let serialized = serde_json::to_value(SessionStatusDto {
             profile_id: Some("primary-profile".to_owned()),
             is_locked: true,
+            inactivity_timeout_milliseconds: None,
         })
         .expect("session status must serialize for commands");
 
         assert_eq!(serialized["profileId"], "primary-profile");
         assert_eq!(serialized["isLocked"], true);
+        assert_eq!(serialized["inactivityTimeoutMilliseconds"], serde_json::Value::Null);
         assert!(serialized.get("profile_id").is_none());
     }
 
@@ -133,5 +145,13 @@ mod tests {
         .expect("transaction DTO must serialize for commands");
 
         assert_eq!(serialized["minorUnits"], "9007199254740993");
+    }
+
+    #[test]
+    fn serializes_a_non_secret_profile_summary() {
+        let serialized = serde_json::to_value(ProfileSummaryDto { id: "home-profile".to_owned() })
+            .expect("profile summary must serialize for commands");
+
+        assert_eq!(serialized, serde_json::json!({ "id": "home-profile" }));
     }
 }
