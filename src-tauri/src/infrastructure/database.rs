@@ -193,14 +193,14 @@ mod tests {
         deriver.derive_database_key(b"test-only passphrase", &metadata).expect("test key derives")
     }
 
-    /// Proves a fresh file receives the embedded bootstrap schema and migration record.
+    /// Proves a fresh file receives the complete embedded schema and migration records.
     #[test]
     fn creates_and_migrates_a_fresh_database() {
         let fixture = TemporaryDatabase::new();
         let key = test_key();
         let database = Database::create(fixture.path(), &key).expect("database initializes");
 
-        assert_eq!(database.schema_version().expect("schema version is readable"), 1);
+        assert_eq!(database.schema_version().expect("schema version is readable"), 2);
         database.with_connection(|connection| {
             let metadata_table_count: u32 = connection
                 .query_row(
@@ -210,6 +210,15 @@ mod tests {
                 )
                 .expect("SQLite metadata query succeeds");
             assert_eq!(metadata_table_count, 1);
+
+            let finance_table_count: u32 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'transactions'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("SQLite metadata query succeeds");
+            assert_eq!(finance_table_count, 1);
         });
     }
 
@@ -240,7 +249,7 @@ mod tests {
         assert_eq!(error.code, ErrorCode::Conflict);
     }
 
-    /// Proves reopening a migrated database is idempotent and preserves a single migration record.
+    /// Proves reopening a migrated database is idempotent and preserves every migration record.
     #[test]
     fn reruns_migrations_idempotently_when_database_is_reopened() {
         let fixture = TemporaryDatabase::new();
@@ -250,13 +259,52 @@ mod tests {
         drop(first);
         let reopened = Database::open(fixture.path(), &key).expect("reopening database succeeds");
 
-        assert_eq!(reopened.schema_version().expect("schema version is readable"), 1);
+        assert_eq!(reopened.schema_version().expect("schema version is readable"), 2);
         reopened.with_connection(|connection| {
             let migration_count: u32 = connection
                 .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
                 .expect("migration count query succeeds");
-            assert_eq!(migration_count, 1);
+            assert_eq!(migration_count, 2);
         });
+    }
+
+    /// Proves the finance schema rejects records that cross an authenticated profile boundary.
+    #[test]
+    fn rejects_cross_profile_finance_references() {
+        let fixture = TemporaryDatabase::new();
+        let key = test_key();
+        let database = Database::create(fixture.path(), &key).expect("database initializes");
+
+        let result = database.in_transaction(|transaction| {
+            transaction
+                .execute(
+                    "INSERT INTO profile_scopes (id, created_at, updated_at) VALUES (?1, ?2, ?2)",
+                    ("profile-a", "2026-11-23T00:00:00Z"),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO profile_scopes (id, created_at, updated_at) VALUES (?1, ?2, ?2)",
+                    ("profile-b", "2026-11-23T00:00:00Z"),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO accounts (id, profile_id, name, account_type, currency, opening_minor_units, is_archived, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    ("account-a", "profile-a", "Cash", "cash", "USD", 0_i64, 0_i64, "2026-11-23T00:00:00Z"),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+
+            let cross_profile_insert = transaction.execute(
+                "INSERT INTO transactions (id, profile_id, account_id, occurred_on, entry_type, minor_units, currency, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                ("transaction-b", "profile-b", "account-a", "2026-11-23", "expense", -100_i64, "USD", "2026-11-23T00:00:00Z"),
+            );
+            assert!(cross_profile_insert.is_err());
+
+            Ok(())
+        });
+
+        assert!(result.is_ok());
     }
 
     /// Proves the connection setup enables foreign-key enforcement for all future repositories.

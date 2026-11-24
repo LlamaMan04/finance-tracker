@@ -10,12 +10,20 @@ pub(super) struct Migration {
     pub(super) sql: &'static str,
 }
 
-/// Lists every released bootstrap migration in the only order in which they may run.
-const MIGRATIONS: [Migration; 1] = [Migration {
-    version: 1,
-    name: "bootstrap_schema",
-    sql: include_str!("migrations/0001_bootstrap.sql"),
-}];
+/// Lists every released migration in the only order in which they may run.
+const MIGRATIONS: [Migration; 2] = [
+    Migration {
+        version: 1,
+        name: "bootstrap_schema",
+        sql: include_str!("migrations/0001_bootstrap.sql"),
+    },
+    // Establishes the protected ledger shape before repositories or commands write finance data.
+    Migration {
+        version: 2,
+        name: "core_finance_schema",
+        sql: include_str!("migrations/0002_core_finance_schema.sql"),
+    },
+];
 
 /// Reports the migration state after a successful migration run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
