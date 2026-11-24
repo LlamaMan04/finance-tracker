@@ -36,6 +36,26 @@ pub struct BudgetDto {
     pub is_archived: bool,
 }
 
+/// Carries one planned category amount for an inclusive budget period.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetAllocationDto {
+    /// Holds the stable allocation identifier.
+    pub id: String,
+    /// Holds the owning budget identifier.
+    pub budget_id: String,
+    /// Holds the planned category identifier.
+    pub category_id: String,
+    /// Holds the inclusive canonical period start date.
+    pub period_starts_on: String,
+    /// Holds the inclusive canonical period end date.
+    pub period_ends_on: String,
+    /// Stores the signed planned amount as an exact string for JavaScript safety.
+    pub planned_minor_units: String,
+    /// Holds an optional user-provided explanation without exposing persistence details.
+    pub notes: Option<String>,
+}
+
 /// Carries the non-secret category fields that future commands will accept or display.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

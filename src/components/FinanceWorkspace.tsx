@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import type { AccountDto, BudgetDto, CategoryDto, TransactionDto } from "../api/contracts";
+import type {
+  AccountDto,
+  BudgetAllocationDto,
+  BudgetDto,
+  CategoryDto,
+  TransactionDto,
+} from "../api/contracts";
 import { FinanceCommandClient } from "../api/commandClient";
 import { ErrorNotice } from "./ErrorNotice";
 
@@ -27,6 +33,8 @@ export function FinanceWorkspace({
   const [categories, setCategories] = useState<CategoryDto[]>([]);
   /** Holds account DTOs returned by Rust for the active profile only. */
   const [accounts, setAccounts] = useState<AccountDto[]>([]);
+  /** Holds Rust-authoritative planned budget category amounts for the active profile only. */
+  const [budgetAllocations, setBudgetAllocations] = useState<BudgetAllocationDto[]>([]);
   /** Tracks the selected ledger kind so the category choices remain applicable. */
   const [transactionKind, setTransactionKind] = useState<"income" | "expense">("expense");
   /** Shows the Rust-normalized result of the current entry without implementing history yet. */
@@ -40,14 +48,16 @@ export function FinanceWorkspace({
 
   /** Loads all reference data together after the profile becomes authenticated. */
   async function refresh() {
-    const [nextBudgets, nextCategories, nextAccounts] = await Promise.all([
+    const [nextBudgets, nextCategories, nextAccounts, nextBudgetAllocations] = await Promise.all([
       commandClient.listBudgets(),
       commandClient.listCategories(),
       commandClient.listAccounts(),
+      commandClient.listBudgetAllocations(),
     ]);
     setBudgets(nextBudgets);
     setCategories(nextCategories);
     setAccounts(nextAccounts);
+    setBudgetAllocations(nextBudgetAllocations);
   }
 
   useEffect(() => {
@@ -115,6 +125,26 @@ export function FinanceWorkspace({
         accountType: String(values.get("accountType")) as AccountDto["accountType"],
         currency: String(values.get("accountCurrency") ?? ""),
         openingMinorUnits: String(values.get("openingMinorUnits") ?? ""),
+      });
+      form.reset();
+    });
+  }
+
+  /** Creates or replaces the one plan for a budget, category, and inclusive period. */
+  function submitBudgetAllocation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    /** Retains the form element beyond the submit event lifetime. */
+    const form = event.currentTarget;
+    /** Captures fields synchronously before the async command begins. */
+    const values = new FormData(form);
+    void mutate(async () => {
+      await commandClient.upsertBudgetAllocation({
+        budgetId: String(values.get("allocationBudgetId") ?? ""),
+        categoryId: String(values.get("allocationCategoryId") ?? ""),
+        periodStartsOn: String(values.get("allocationPeriodStartsOn") ?? ""),
+        periodEndsOn: String(values.get("allocationPeriodEndsOn") ?? ""),
+        plannedMinorUnits: String(values.get("allocationPlannedMinorUnits") ?? ""),
+        notes: String(values.get("allocationNotes") ?? "") || null,
       });
       form.reset();
     });
@@ -263,6 +293,76 @@ export function FinanceWorkspace({
           onEdit={editCategory}
         />
       </section>
+      <section aria-labelledby="budget-allocations-heading" className="finance-section">
+        <h2 id="budget-allocations-heading">Budget period plans</h2>
+        <p>
+          Plan income with positive minor units and expenses with negative minor units. Submitting
+          the same budget, category, and period replaces its existing plan.
+        </p>
+        <form onSubmit={submitBudgetAllocation}>
+          <label htmlFor="allocation-budget">Budget</label>
+          <select id="allocation-budget" name="allocationBudgetId" required>
+            <option value="">Choose a budget</option>
+            {budgets
+              .filter((budget) => !budget.isArchived)
+              .map((budget) => (
+                <option key={budget.id} value={budget.id}>
+                  {budget.name} ({budget.currency})
+                </option>
+              ))}
+          </select>
+          <label htmlFor="allocation-category">Category</label>
+          <select id="allocation-category" name="allocationCategoryId" required>
+            <option value="">Choose a category</option>
+            {categories
+              .filter((category) => !category.isArchived)
+              .map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name} ({category.categoryKind})
+                </option>
+              ))}
+          </select>
+          <label htmlFor="allocation-period-start">Period starts</label>
+          <input
+            id="allocation-period-start"
+            name="allocationPeriodStartsOn"
+            required
+            type="date"
+          />
+          <label htmlFor="allocation-period-end">Period ends</label>
+          <input
+            id="allocation-period-end"
+            name="allocationPeriodEndsOn"
+            required
+            type="date"
+          />
+          <label htmlFor="allocation-planned-minor-units">Planned amount (minor units)</label>
+          <input
+            id="allocation-planned-minor-units"
+            inputMode="numeric"
+            name="allocationPlannedMinorUnits"
+            required
+          />
+          <label htmlFor="allocation-notes">Notes (optional)</label>
+          <textarea id="allocation-notes" maxLength={1000} name="allocationNotes" />
+          <button disabled={disabled}>Save period plan</button>
+        </form>
+        <BudgetAllocationList
+          allocations={budgetAllocations}
+          budgets={budgets}
+          categories={categories}
+          disabled={disabled}
+          onRemove={(allocation) => {
+            if (
+              window.confirm(
+                "Remove this budget period plan? It does not remove transactions or reference data.",
+              )
+            ) {
+              void mutate(() => commandClient.removeBudgetAllocation(allocation.id));
+            }
+          }}
+        />
+      </section>
       <section aria-labelledby="accounts-heading" className="finance-section">
         <h2 id="accounts-heading">Accounts</h2>
         <form onSubmit={submitAccount}>
@@ -389,6 +489,53 @@ export function FinanceWorkspace({
         )}
       </section>
     </section>
+  );
+}
+
+/** Renders each planned amount with stable text labels rather than a financial calculation. */
+function BudgetAllocationList({
+  allocations,
+  budgets,
+  categories,
+  disabled,
+  onRemove,
+}: {
+  allocations: BudgetAllocationDto[];
+  budgets: BudgetDto[];
+  categories: CategoryDto[];
+  disabled: boolean;
+  onRemove: (allocation: BudgetAllocationDto) => void;
+}) {
+  if (allocations.length === 0) return <p>No period plans yet.</p>;
+  return (
+    <ul className="record-list">
+      {allocations.map((allocation) => {
+        /** Preserves understandable historical labels when a reference record is now archived. */
+        const budget = budgets.find((candidate) => candidate.id === allocation.budgetId);
+        /** Looks up the category label without moving financial rules into the UI. */
+        const category = categories.find((candidate) => candidate.id === allocation.categoryId);
+        return (
+          <li key={allocation.id}>
+            <span>
+              {budget?.name ?? "Unknown budget"} · {category?.name ?? "Unknown category"} ·{" "}
+              {allocation.periodStartsOn} to {allocation.periodEndsOn} ·{" "}
+              {allocation.plannedMinorUnits}
+              {allocation.notes ? ` · ${allocation.notes}` : ""}
+            </span>
+            <span className="record-actions">
+              <button
+                className="danger-button"
+                disabled={disabled}
+                onClick={() => onRemove(allocation)}
+                type="button"
+              >
+                Remove plan
+              </button>
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

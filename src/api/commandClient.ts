@@ -4,6 +4,8 @@ import type {
   AccountDto,
   AccountInput,
   AccountUpdateInput,
+  BudgetAllocationDto,
+  BudgetAllocationInput,
   BudgetDto,
   BudgetInput,
   BudgetUpdateInput,
@@ -70,6 +72,18 @@ export class FinanceCommandClient {
   /** Archives a protected budget. */
   async archiveBudget(id: string): Promise<void> {
     await this.invokeCommand<void>("archive_budget", { id });
+  }
+  /** Lists protected planned category amounts for all active-profile budgets. */
+  async listBudgetAllocations(): Promise<BudgetAllocationDto[]> {
+    return this.invokeCommand<BudgetAllocationDto[]>("list_budget_allocations");
+  }
+  /** Creates or replaces one protected budget/category/period plan. */
+  async upsertBudgetAllocation(request: BudgetAllocationInput): Promise<BudgetAllocationDto> {
+    return this.invokeCommand<BudgetAllocationDto>("upsert_budget_allocation", { request });
+  }
+  /** Removes one protected planning record without modifying ledger entries. */
+  async removeBudgetAllocation(id: string): Promise<void> {
+    await this.invokeCommand<void>("remove_budget_allocation", { id });
   }
 
   /** Lists the active profile's protected categories. */

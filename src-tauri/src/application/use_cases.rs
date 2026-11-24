@@ -2,8 +2,8 @@
 
 use crate::application::ApplicationError;
 use crate::application::contracts::{
-    AccountDto, AllocationDto, BackupDto, BudgetDto, CategoryDto, ProfileSummaryDto,
-    SessionStatusDto, TransactionDto,
+    AccountDto, AllocationDto, BackupDto, BudgetAllocationDto, BudgetDto, CategoryDto,
+    ProfileSummaryDto, SessionStatusDto, TransactionDto,
 };
 use crate::domain::{
     AccountId, AllocationId, BackupId, BudgetId, CategoryId, ProfileScope, TransactionId,
@@ -53,6 +53,26 @@ pub trait BudgetService {
 
     /// Archives a budget while retaining its historical records.
     fn archive(&self, scope: &ProfileScope, budget_id: &BudgetId) -> Result<(), ApplicationError>;
+}
+
+/// Defines budget-period planning operations independent of command and SQL adapters.
+pub trait BudgetAllocationService {
+    /// Lists the profile's planned category amounts in deterministic period order.
+    fn list(&self, scope: &ProfileScope) -> Result<Vec<BudgetAllocationDto>, ApplicationError>;
+
+    /// Creates or replaces a unique budget/category/period plan.
+    fn upsert(
+        &self,
+        scope: &ProfileScope,
+        request: UpsertBudgetAllocationRequest,
+    ) -> Result<BudgetAllocationDto, ApplicationError>;
+
+    /// Removes an unused planning amount without affecting ledger history.
+    fn remove(
+        &self,
+        scope: &ProfileScope,
+        allocation_id: &AllocationId,
+    ) -> Result<(), ApplicationError>;
 }
 
 /// Defines category operations that will be implemented after secure sessions exist.
@@ -208,6 +228,22 @@ pub struct CreateTransactionRequest {
     /// Holds an optional short description.
     pub description: Option<String>,
     /// Holds optional long-form notes.
+    pub notes: Option<String>,
+}
+
+/// Holds the fields required to create or replace one period/category budget plan.
+pub struct UpsertBudgetAllocationRequest {
+    /// Holds the affected budget identifier.
+    pub budget_id: String,
+    /// Holds the planned category identifier.
+    pub category_id: String,
+    /// Holds the inclusive start of the planned period.
+    pub period_starts_on: String,
+    /// Holds the inclusive end of the planned period.
+    pub period_ends_on: String,
+    /// Holds the signed planned amount in exact minor units.
+    pub planned_minor_units: i64,
+    /// Holds optional supporting text for the plan.
     pub notes: Option<String>,
 }
 

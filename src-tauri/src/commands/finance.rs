@@ -1,8 +1,11 @@
 //! Validated Tauri commands for profile-scoped budgets, categories, and accounts.
 
 use crate::application::ApplicationError;
-use crate::application::contracts::{AccountDto, BudgetDto, CategoryDto, TransactionDto};
+use crate::application::contracts::{
+    AccountDto, BudgetAllocationDto, BudgetDto, CategoryDto, TransactionDto,
+};
 use crate::commands::safe_error;
+use crate::infrastructure::budget_allocation_repository::BudgetAllocationRepository;
 use crate::infrastructure::finance_repository::FinanceRepository;
 use crate::security::LocalProfileService;
 use serde::Deserialize;
@@ -22,6 +25,18 @@ pub struct BudgetInput {
 pub struct BudgetUpdateInput {
     pub id: String,
     pub name: String,
+}
+
+/// Accepts a unique period/category budget plan while keeping financial rules in Rust.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetAllocationInput {
+    pub budget_id: String,
+    pub category_id: String,
+    pub period_starts_on: String,
+    pub period_ends_on: String,
+    pub planned_minor_units: String,
+    pub notes: Option<String>,
 }
 
 /// Accepts untrusted category fields at the narrow command boundary.
@@ -125,6 +140,55 @@ pub fn archive_budget(
     service
         .with_active_profile(|scope, database| {
             FinanceRepository::archive_budget(database, scope, &id)
+        })
+        .map_err(safe_error)
+}
+
+/// Lists planned category amounts for the active protected profile.
+#[tauri::command]
+pub fn list_budget_allocations(
+    service: State<'_, LocalProfileService>,
+) -> Result<Vec<BudgetAllocationDto>, ApplicationError> {
+    service
+        .with_active_profile(|scope, database| BudgetAllocationRepository::list(database, scope))
+        .map_err(safe_error)
+}
+
+/// Creates or replaces the active profile's plan for one budget, category, and period.
+#[tauri::command]
+pub fn upsert_budget_allocation(
+    service: State<'_, LocalProfileService>,
+    request: BudgetAllocationInput,
+) -> Result<BudgetAllocationDto, ApplicationError> {
+    let planned_minor_units = request
+        .planned_minor_units
+        .parse::<i64>()
+        .map_err(|_| safe_error(ApplicationError::validation()))?;
+    service
+        .with_active_profile(|scope, database| {
+            BudgetAllocationRepository::upsert(
+                database,
+                scope,
+                &request.budget_id,
+                &request.category_id,
+                &request.period_starts_on,
+                &request.period_ends_on,
+                planned_minor_units,
+                request.notes.as_deref(),
+            )
+        })
+        .map_err(safe_error)
+}
+
+/// Deletes an active profile's plan without touching ledger transactions or reference data.
+#[tauri::command]
+pub fn remove_budget_allocation(
+    service: State<'_, LocalProfileService>,
+    id: String,
+) -> Result<(), ApplicationError> {
+    service
+        .with_active_profile(|scope, database| {
+            BudgetAllocationRepository::remove(database, scope, &id)
         })
         .map_err(safe_error)
 }

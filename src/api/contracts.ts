@@ -104,6 +104,32 @@ export interface BudgetUpdateInput {
   id: string;
   name: string;
 }
+/** Describes one signed category plan for an inclusive budget period. */
+export interface BudgetAllocationDto {
+  /** Holds the stable planning record identifier. */
+  id: string;
+  /** Holds the owning budget identifier. */
+  budgetId: string;
+  /** Holds the planned category identifier. */
+  categoryId: string;
+  /** Holds the inclusive canonical period start date. */
+  periodStartsOn: string;
+  /** Holds the inclusive canonical period end date. */
+  periodEndsOn: string;
+  /** Stores the signed planned amount without JavaScript numeric conversion. */
+  plannedMinorUnits: string;
+  /** Holds an optional explanation for this plan. */
+  notes: string | null;
+}
+/** Carries one unique budget/category/period plan to Rust. */
+export interface BudgetAllocationInput {
+  budgetId: string;
+  categoryId: string;
+  periodStartsOn: string;
+  periodEndsOn: string;
+  plannedMinorUnits: string;
+  notes: string | null;
+}
 /** Carries category fields directly to the Rust command boundary. */
 export interface CategoryInput {
   name: string;
