@@ -122,6 +122,20 @@ pub struct TransactionDto {
     pub allocations: Vec<AllocationDto>,
 }
 
+/// Carries one deterministic page of protected transaction history.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionHistoryPageDto {
+    /// Holds the transactions selected by the requested profile-scoped filters.
+    pub transactions: Vec<TransactionDto>,
+    /// Holds the total matching record count so the UI can render stable pagination controls.
+    pub total_count: u64,
+    /// Holds the zero-based page number that produced this result.
+    pub page: u32,
+    /// Holds the bounded page size used to produce this result.
+    pub page_size: u32,
+}
+
 /// Carries the two normalized ledger facts created by one atomic account transfer.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

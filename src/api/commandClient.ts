@@ -16,6 +16,8 @@ import type {
   ProfileSummary,
   SessionStatus,
   TransactionDto,
+  TransactionHistoryInput,
+  TransactionHistoryPageDto,
   TransferDto,
   TransferInput,
   TransactionInput,
@@ -130,6 +132,16 @@ export class FinanceCommandClient {
   /** Records two linked transfer entries in the active protected profile. */
   async createTransfer(request: TransferInput): Promise<TransferDto> {
     return this.invokeCommand<TransferDto>("create_transfer", { request });
+  }
+
+  /** Lists one filtered deterministic page from the protected immutable ledger. */
+  async listTransactions(request: TransactionHistoryInput): Promise<TransactionHistoryPageDto> {
+    return this.invokeCommand<TransactionHistoryPageDto>("list_transactions", { request });
+  }
+
+  /** Creates an immutable equal-and-opposite correction for an eligible ledger entry. */
+  async reverseTransaction(id: string): Promise<TransactionDto> {
+    return this.invokeCommand<TransactionDto>("reverse_transaction", { id });
   }
 
   /** Converts unknown Tauri failures into the reviewed frontend error shape. */

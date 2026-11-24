@@ -2,7 +2,8 @@
 
 use crate::application::ApplicationError;
 use crate::application::contracts::{
-    AccountDto, BudgetAllocationDto, BudgetDto, CategoryDto, TransactionDto, TransferDto,
+    AccountDto, BudgetAllocationDto, BudgetDto, CategoryDto, TransactionDto,
+    TransactionHistoryPageDto, TransferDto,
 };
 use crate::application::use_cases::TransactionAllocationRequest;
 use crate::commands::safe_error;
@@ -115,6 +116,20 @@ pub struct TransferInput {
     pub minor_units: String,
     pub currency: String,
     pub occurred_on: String,
+}
+
+/// Accepts optional protected-history filters and bounded zero-based pagination.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionHistoryInput {
+    pub starts_on: Option<String>,
+    pub ends_on: Option<String>,
+    pub account_id: Option<String>,
+    pub category_id: Option<String>,
+    pub entry_type: Option<String>,
+    pub search: Option<String>,
+    pub page: u32,
+    pub page_size: u32,
 }
 
 /// Lists protected budgets only after the active profile has authenticated.
@@ -414,6 +429,43 @@ pub fn create_transfer(
                 &request.currency,
                 &request.occurred_on,
             )
+        })
+        .map_err(safe_error)
+}
+
+/// Lists a filtered, deterministic page of ledger facts in the authenticated profile only.
+#[tauri::command]
+pub fn list_transactions(
+    service: State<'_, LocalProfileService>,
+    request: TransactionHistoryInput,
+) -> Result<TransactionHistoryPageDto, ApplicationError> {
+    service
+        .with_active_profile(|scope, database| {
+            FinanceRepository::list_transactions(
+                database,
+                scope,
+                request.starts_on.as_deref(),
+                request.ends_on.as_deref(),
+                request.account_id.as_deref(),
+                request.category_id.as_deref(),
+                request.entry_type.as_deref(),
+                request.search.as_deref(),
+                request.page,
+                request.page_size,
+            )
+        })
+        .map_err(safe_error)
+}
+
+/// Creates an equal-and-opposite correction instead of mutating immutable finance history.
+#[tauri::command]
+pub fn reverse_transaction(
+    service: State<'_, LocalProfileService>,
+    id: String,
+) -> Result<TransactionDto, ApplicationError> {
+    service
+        .with_active_profile(|scope, database| {
+            FinanceRepository::reverse_transaction(database, scope, &id)
         })
         .map_err(safe_error)
 }

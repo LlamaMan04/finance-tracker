@@ -5,6 +5,7 @@ import type {
   BudgetDto,
   CategoryDto,
   TransactionDto,
+  TransactionHistoryInput,
   TransferDto,
 } from "../api/contracts";
 import { FinanceCommandClient } from "../api/commandClient";
@@ -55,6 +56,21 @@ export function FinanceWorkspace({
   );
   /** Shows the safe normalized transfer result without retaining an independent ledger copy. */
   const [lastRecordedTransfer, setLastRecordedTransfer] = useState<TransferDto | null>(null);
+  /** Holds the current Rust-authoritative history page rather than a client-maintained ledger. */
+  const [historyTransactions, setHistoryTransactions] = useState<TransactionDto[]>([]);
+  /** Holds the total matching history records returned with the current page. */
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
+  /** Retains the applied query so pagination does not discard active filters. */
+  const [historyRequest, setHistoryRequest] = useState<TransactionHistoryInput>({
+    startsOn: null,
+    endsOn: null,
+    accountId: null,
+    categoryId: null,
+    entryType: null,
+    search: null,
+    page: 0,
+    pageSize: 20,
+  });
   /** Holds a safe UI error and never raw backend diagnostics. */
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   /** Prevents duplicate finance submissions while a command is running. */
@@ -62,16 +78,27 @@ export function FinanceWorkspace({
 
   /** Loads all reference data together after the profile becomes authenticated. */
   async function refresh() {
-    const [nextBudgets, nextCategories, nextAccounts, nextBudgetAllocations] = await Promise.all([
+    const [nextBudgets, nextCategories, nextAccounts, nextBudgetAllocations, nextHistory] = await Promise.all([
       commandClient.listBudgets(),
       commandClient.listCategories(),
       commandClient.listAccounts(),
       commandClient.listBudgetAllocations(),
+      commandClient.listTransactions(historyRequest),
     ]);
     setBudgets(nextBudgets);
     setCategories(nextCategories);
     setAccounts(nextAccounts);
     setBudgetAllocations(nextBudgetAllocations);
+    setHistoryTransactions(nextHistory.transactions);
+    setHistoryTotalCount(nextHistory.totalCount);
+  }
+
+  /** Fetches an explicitly selected filter page while preserving Rust as the ledger source of truth. */
+  async function loadHistory(request: TransactionHistoryInput) {
+    const nextHistory = await commandClient.listTransactions(request);
+    setHistoryRequest(request);
+    setHistoryTransactions(nextHistory.transactions);
+    setHistoryTotalCount(nextHistory.totalCount);
   }
 
   useEffect(() => {
@@ -216,6 +243,35 @@ export function FinanceWorkspace({
       setLastRecordedTransfer(transfer);
       form.reset();
     });
+  }
+
+  /** Applies optional history filters without duplicating filtering or pagination rules in React. */
+  function submitHistoryFilters(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    /** Captures filter values synchronously before protected history is queried. */
+    const values = new FormData(event.currentTarget);
+    const request: TransactionHistoryInput = {
+      startsOn: String(values.get("historyStartsOn") ?? "") || null,
+      endsOn: String(values.get("historyEndsOn") ?? "") || null,
+      accountId: String(values.get("historyAccountId") ?? "") || null,
+      categoryId: String(values.get("historyCategoryId") ?? "") || null,
+      entryType:
+        (String(values.get("historyEntryType") ?? "") as TransactionHistoryInput["entryType"]) ||
+        null,
+      search: String(values.get("historySearch") ?? "") || null,
+      page: 0,
+      pageSize: historyRequest.pageSize,
+    };
+    setErrorMessage(null);
+    void loadHistory(request).catch(() => setErrorMessage("The operation could not be completed."));
+  }
+
+  /** Creates a compensating ledger fact only after the user confirms the permanent audit action. */
+  function confirmReverse(transaction: TransactionDto) {
+    if (!window.confirm("Reverse this entry? This adds an immutable equal-and-opposite correction.")) {
+      return;
+    }
+    void mutate(() => commandClient.reverseTransaction(transaction.id));
   }
 
   /** Adds an empty split row without calculating or validating financial values in the UI. */
@@ -664,8 +720,91 @@ export function FinanceWorkspace({
           </p>
         )}
       </section>
+      <section aria-labelledby="history-heading" className="finance-section">
+        <h2 id="history-heading">Transaction history</h2>
+        <form onSubmit={submitHistoryFilters}>
+          <label htmlFor="history-starts-on">From date</label>
+          <input id="history-starts-on" name="historyStartsOn" type="date" />
+          <label htmlFor="history-ends-on">To date</label>
+          <input id="history-ends-on" name="historyEndsOn" type="date" />
+          <label htmlFor="history-account">Account</label>
+          <select id="history-account" name="historyAccountId">
+            <option value="">All accounts</option>
+            {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+          </select>
+          <label htmlFor="history-category">Category</label>
+          <select id="history-category" name="historyCategoryId">
+            <option value="">All categories</option>
+            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+          </select>
+          <label htmlFor="history-entry-type">Type</label>
+          <select id="history-entry-type" name="historyEntryType">
+            <option value="">All types</option>
+            <option value="income">Income</option>
+            <option value="expense">Expense</option>
+            <option value="transfer">Transfer</option>
+            <option value="correction">Correction</option>
+          </select>
+          <label htmlFor="history-search">Search payee, description, or notes</label>
+          <input id="history-search" maxLength={200} name="historySearch" />
+          <button disabled={disabled}>Apply history filters</button>
+        </form>
+        <p aria-live="polite">{historyTotalCount} matching transaction{historyTotalCount === 1 ? "" : "s"}.</p>
+        <TransactionHistoryList
+          accounts={accounts}
+          categories={categories}
+          disabled={disabled}
+          onReverse={confirmReverse}
+          transactions={historyTransactions}
+        />
+        <div className="record-actions">
+          <button
+            className="secondary-button"
+            disabled={disabled || historyRequest.page === 0}
+            onClick={() => void loadHistory({ ...historyRequest, page: historyRequest.page - 1 })}
+            type="button"
+          >Previous page</button>
+          <button
+            className="secondary-button"
+            disabled={disabled || (historyRequest.page + 1) * historyRequest.pageSize >= historyTotalCount}
+            onClick={() => void loadHistory({ ...historyRequest, page: historyRequest.page + 1 })}
+            type="button"
+          >Next page</button>
+        </div>
+      </section>
     </section>
   );
+}
+
+/** Renders history with explicit text labels and only permits reversible original ledger facts. */
+function TransactionHistoryList({
+  accounts, categories, disabled, onReverse, transactions,
+}: {
+  accounts: AccountDto[];
+  categories: CategoryDto[];
+  disabled: boolean;
+  onReverse: (transaction: TransactionDto) => void;
+  transactions: TransactionDto[];
+}) {
+  if (transactions.length === 0) return <p>No transactions match these filters.</p>;
+  return <ul className="record-list">
+    {transactions.map((transaction) => {
+      /** Resolves a readable label without recalculating protected financial data. */
+      const account = accounts.find((candidate) => candidate.id === transaction.accountId);
+      /** Retains useful category context for direct-category transactions. */
+      const category = categories.find((candidate) => candidate.id === transaction.categoryId);
+      return <li key={transaction.id}>
+        <span>
+          {transaction.occurredOn} · {transaction.entryType} · {transaction.minorUnits} {transaction.currency} · {account?.name ?? "Archived or unknown account"}
+          {category ? ` · ${category.name}` : ""}{transaction.payee ? ` · ${transaction.payee}` : ""}
+          {transaction.allocations.length > 0 ? ` · ${transaction.allocations.length} split categories` : ""}
+        </span>
+        {(transaction.entryType === "income" || transaction.entryType === "expense") && (
+          <span className="record-actions"><button className="danger-button" disabled={disabled} onClick={() => onReverse(transaction)} type="button">Reverse</button></span>
+        )}
+      </li>;
+    })}
+  </ul>;
 }
 
 /** Renders each planned amount with stable text labels rather than a financial calculation. */

@@ -183,6 +183,30 @@ export interface TransactionDto {
   allocations: TransactionAllocationDto[];
 }
 
+/** Describes one deterministic page of Rust-authoritative protected transaction history. */
+export interface TransactionHistoryPageDto {
+  /** Holds the records selected by the requested filters. */
+  transactions: TransactionDto[];
+  /** Holds the total matching records for pagination controls. */
+  totalCount: number;
+  /** Holds the zero-based page that produced this response. */
+  page: number;
+  /** Holds the bounded number of records per page. */
+  pageSize: number;
+}
+
+/** Carries optional history filters directly to the Rust command boundary. */
+export interface TransactionHistoryInput {
+  startsOn: string | null;
+  endsOn: string | null;
+  accountId: string | null;
+  categoryId: string | null;
+  entryType: "income" | "expense" | "transfer" | "correction" | null;
+  search: string | null;
+  page: number;
+  pageSize: number;
+}
+
 /** Describes the linked ledger facts created by one atomic account transfer. */
 export interface TransferDto {
   /** Holds the negative source-account entry. */

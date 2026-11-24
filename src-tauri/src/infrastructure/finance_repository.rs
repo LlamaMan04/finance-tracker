@@ -2,12 +2,14 @@
 
 use crate::application::ApplicationError;
 use crate::application::contracts::{
-    AccountDto, AllocationDto, BudgetDto, CategoryDto, TransactionDto,
+    AccountDto, AllocationDto, BudgetDto, CategoryDto, TransactionDto, TransactionHistoryPageDto,
 };
 use crate::application::use_cases::TransactionAllocationRequest;
-use crate::domain::{AccountId, BudgetId, CategoryId, CurrencyCode, LocalDate, ProfileScope};
+use crate::domain::{
+    AccountId, BudgetId, CategoryId, CurrencyCode, LocalDate, ProfileScope, TransactionId,
+};
 use crate::infrastructure::database::Database;
-use rusqlite::{Row, params};
+use rusqlite::{Row, params, types::Value};
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -300,6 +302,220 @@ impl FinanceRepository {
             })
         })
     }
+
+    /// Reads a stable page of protected ledger history without exposing another profile's records.
+    pub fn list_transactions(
+        database: &Database,
+        scope: &ProfileScope,
+        starts_on: Option<&str>,
+        ends_on: Option<&str>,
+        account_id: Option<&str>,
+        category_id: Option<&str>,
+        entry_type: Option<&str>,
+        search: Option<&str>,
+        page: u32,
+        page_size: u32,
+    ) -> Result<TransactionHistoryPageDto, ApplicationError> {
+        let parsed_starts_on = starts_on.map(LocalDate::parse).transpose()?;
+        let parsed_ends_on = ends_on.map(LocalDate::parse).transpose()?;
+        if parsed_starts_on
+            .as_ref()
+            .zip(parsed_ends_on.as_ref())
+            .is_some_and(|(start, end)| start > end)
+        {
+            return Err(ApplicationError::validation());
+        }
+        let account_id = account_id.map(AccountId::parse).transpose()?;
+        let category_id = category_id.map(CategoryId::parse).transpose()?;
+        let entry_type = entry_type.map(validate_history_entry_type).transpose()?;
+        let search = validate_optional_text(search, 200)?;
+        // Bounds keep a hostile caller from forcing an unbounded protected-database read.
+        let page_size = page_size.clamp(1, 100);
+        let offset = u64::from(page)
+            .checked_mul(u64::from(page_size))
+            .ok_or_else(ApplicationError::validation)?;
+        let offset = i64::try_from(offset).map_err(|_| ApplicationError::validation())?;
+
+        database.in_transaction(|transaction| {
+            let (where_clause, filter_values) = transaction_history_filters(
+                scope,
+                starts_on,
+                ends_on,
+                account_id.as_ref().map(|value| value.as_str()),
+                category_id.as_ref().map(|value| value.as_str()),
+                entry_type,
+                search.as_deref(),
+            );
+            let count_sql = format!("SELECT COUNT(*) FROM transactions t WHERE {where_clause}");
+            let total_count: i64 = transaction
+                .query_row(&count_sql, rusqlite::params_from_iter(filter_values.iter()), |row| row.get(0))
+                .map_err(|_| ApplicationError::internal())?;
+
+            let list_sql = format!(
+                "SELECT t.id, t.account_id, t.budget_id, t.category_id, t.minor_units, t.currency, t.occurred_on, t.entry_type, t.payee, t.description, t.notes FROM transactions t WHERE {where_clause} ORDER BY t.occurred_on DESC, t.id DESC LIMIT ? OFFSET ?"
+            );
+            let mut list_values = filter_values;
+            list_values.push(Value::Integer(i64::from(page_size)));
+            list_values.push(Value::Integer(offset));
+            let mut statement = transaction.prepare(&list_sql).map_err(|_| ApplicationError::internal())?;
+            let rows = statement
+                .query_map(rusqlite::params_from_iter(list_values.iter()), transaction_from_row)
+                .map_err(|_| ApplicationError::internal())?;
+            let mut transactions = rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApplicationError::internal())?;
+            drop(statement);
+            for transaction_dto in &mut transactions {
+                transaction_dto.allocations = load_allocations(transaction, scope, &transaction_dto.id)?;
+            }
+            Ok(TransactionHistoryPageDto {
+                transactions,
+                total_count: u64::try_from(total_count).map_err(|_| ApplicationError::internal())?,
+                page,
+                page_size,
+            })
+        })
+    }
+
+    /// Creates an immutable equal-and-opposite correction for one income or expense entry.
+    pub fn reverse_transaction(
+        database: &Database,
+        scope: &ProfileScope,
+        transaction_id: &str,
+    ) -> Result<TransactionDto, ApplicationError> {
+        let transaction_id = TransactionId::parse(transaction_id)?;
+        database.in_transaction(|transaction| {
+            let original = transaction.query_row(
+                "SELECT id, account_id, budget_id, category_id, minor_units, currency, occurred_on, entry_type, payee, description, notes FROM transactions WHERE profile_id = ?1 AND id = ?2",
+                params![scope.profile_id().as_str(), transaction_id.as_str()], transaction_from_row,
+            ).map_err(|_| ApplicationError::not_found())?;
+            if !matches!(original.entry_type.as_str(), "income" | "expense") {
+                return Err(ApplicationError::validation());
+            }
+            let already_reversed: i64 = transaction.query_row(
+                "SELECT COUNT(*) FROM transaction_corrections WHERE profile_id = ?1 AND original_transaction_id = ?2 AND correction_kind = 'reversal'",
+                params![scope.profile_id().as_str(), transaction_id.as_str()], |row| row.get(0),
+            ).map_err(|_| ApplicationError::internal())?;
+            if already_reversed != 0 {
+                return Err(ApplicationError::conflict());
+            }
+            let reversed_minor_units = original.minor_units.parse::<i64>()
+                .ok().and_then(i64::checked_neg).ok_or_else(ApplicationError::validation)?;
+            let correction_id = new_id("transaction");
+            transaction.execute(
+                "INSERT INTO transactions (id, profile_id, account_id, budget_id, category_id, occurred_on, entry_type, minor_units, currency, payee, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'correction', ?7, ?8, ?9, ?10, ?11, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                params![correction_id, scope.profile_id().as_str(), original.account_id, original.budget_id, original.category_id, original.occurred_on, reversed_minor_units, original.currency, original.payee, original.description, original.notes],
+            ).map_err(|_| ApplicationError::conflict())?;
+            let original_allocations = load_allocations(transaction, scope, transaction_id.as_str())?;
+            let mut allocations = Vec::with_capacity(original_allocations.len());
+            for original_allocation in original_allocations {
+                let minor_units = original_allocation.minor_units.parse::<i64>()
+                    .ok().and_then(i64::checked_neg).ok_or_else(ApplicationError::validation)?;
+                let allocation_id = new_id("allocation");
+                transaction.execute(
+                    "INSERT INTO transaction_allocations (id, profile_id, transaction_id, category_id, minor_units, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                    params![allocation_id, scope.profile_id().as_str(), correction_id, original_allocation.category_id, minor_units],
+                ).map_err(|_| ApplicationError::conflict())?;
+                allocations.push(AllocationDto { id: allocation_id, transaction_id: correction_id.clone(), category_id: original_allocation.category_id, minor_units: minor_units.to_string() });
+            }
+            transaction.execute(
+                "INSERT INTO transaction_corrections (id, profile_id, original_transaction_id, correction_transaction_id, correction_kind, reason, created_at) VALUES (?1, ?2, ?3, ?4, 'reversal', NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                params![new_id("correction"), scope.profile_id().as_str(), transaction_id.as_str(), correction_id],
+            ).map_err(|_| ApplicationError::conflict())?;
+            Ok(TransactionDto { id: correction_id, minor_units: reversed_minor_units.to_string(), entry_type: "correction".to_owned(), allocations, ..original })
+        })
+    }
+}
+
+/// Builds the reviewed SQL predicates and bound values for a profile-scoped history query.
+fn transaction_history_filters(
+    scope: &ProfileScope,
+    starts_on: Option<&str>,
+    ends_on: Option<&str>,
+    account_id: Option<&str>,
+    category_id: Option<&str>,
+    entry_type: Option<&str>,
+    search: Option<&str>,
+) -> (String, Vec<Value>) {
+    let mut clauses = vec!["t.profile_id = ?".to_owned()];
+    let mut values = vec![Value::Text(scope.profile_id().as_str().to_owned())];
+    if let Some(value) = starts_on {
+        clauses.push("t.occurred_on >= ?".to_owned());
+        values.push(Value::Text(value.to_owned()));
+    }
+    if let Some(value) = ends_on {
+        clauses.push("t.occurred_on <= ?".to_owned());
+        values.push(Value::Text(value.to_owned()));
+    }
+    if let Some(value) = account_id {
+        clauses.push("t.account_id = ?".to_owned());
+        values.push(Value::Text(value.to_owned()));
+    }
+    if let Some(value) = category_id {
+        clauses.push("(t.category_id = ? OR EXISTS (SELECT 1 FROM transaction_allocations a WHERE a.profile_id = t.profile_id AND a.transaction_id = t.id AND a.category_id = ?))".to_owned());
+        values.push(Value::Text(value.to_owned()));
+        values.push(Value::Text(value.to_owned()));
+    }
+    if let Some(value) = entry_type {
+        clauses.push("t.entry_type = ?".to_owned());
+        values.push(Value::Text(value.to_owned()));
+    }
+    if let Some(value) = search {
+        clauses.push("(lower(coalesce(t.payee, '')) LIKE ? OR lower(coalesce(t.description, '')) LIKE ? OR lower(coalesce(t.notes, '')) LIKE ?)".to_owned());
+        let pattern = format!("%{}%", value.to_lowercase());
+        values.extend([
+            Value::Text(pattern.clone()),
+            Value::Text(pattern.clone()),
+            Value::Text(pattern),
+        ]);
+    }
+    (clauses.join(" AND "), values)
+}
+
+/// Restricts history type filters to immutable ledger types represented by the schema.
+fn validate_history_entry_type(value: &str) -> Result<&str, ApplicationError> {
+    match value {
+        "income" | "expense" | "transfer" | "correction" => Ok(value),
+        _ => Err(ApplicationError::validation()),
+    }
+}
+
+/// Maps a transaction row without allocations; callers hydrate allocations in the same read transaction.
+fn transaction_from_row(row: &Row<'_>) -> rusqlite::Result<TransactionDto> {
+    let minor_units: i64 = row.get(4)?;
+    Ok(TransactionDto {
+        id: row.get(0)?,
+        account_id: row.get(1)?,
+        budget_id: row.get(2)?,
+        category_id: row.get(3)?,
+        minor_units: minor_units.to_string(),
+        currency: row.get(5)?,
+        occurred_on: row.get(6)?,
+        entry_type: row.get(7)?,
+        payee: row.get(8)?,
+        description: row.get(9)?,
+        notes: row.get(10)?,
+        allocations: vec![],
+    })
+}
+
+/// Loads exact category portions in stable creation order for one already profile-scoped entry.
+fn load_allocations(
+    transaction: &rusqlite::Transaction<'_>,
+    scope: &ProfileScope,
+    transaction_id: &str,
+) -> Result<Vec<AllocationDto>, ApplicationError> {
+    let mut statement = transaction.prepare("SELECT id, transaction_id, category_id, minor_units FROM transaction_allocations WHERE profile_id = ?1 AND transaction_id = ?2 ORDER BY id").map_err(|_| ApplicationError::internal())?;
+    let rows = statement
+        .query_map(params![scope.profile_id().as_str(), transaction_id], |row| {
+            let minor_units: i64 = row.get(3)?;
+            Ok(AllocationDto {
+                id: row.get(0)?,
+                transaction_id: row.get(1)?,
+                category_id: row.get(2)?,
+                minor_units: minor_units.to_string(),
+            })
+        })
+        .map_err(|_| ApplicationError::internal())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApplicationError::internal())
 }
 
 /// Validates a complete split before any ledger write so the transaction and its portions commit together.
@@ -796,5 +1012,133 @@ mod tests {
                 Ok(())
             })
             .expect("rejected splits leave no partial records");
+    }
+
+    /// Proves history filters, allocation category lookup, stable ordering, and page bounds stay profile-scoped.
+    #[test]
+    fn lists_filtered_transaction_history_in_deterministic_pages() {
+        let (_fixture, database, scope) = fixture();
+        let groceries =
+            FinanceRepository::create_category(&database, &scope, "Groceries", "expense", None, 1)
+                .expect("category is created");
+        let dining =
+            FinanceRepository::create_category(&database, &scope, "Dining", "expense", None, 2)
+                .expect("category is created");
+        let account =
+            FinanceRepository::create_account(&database, &scope, "Checking", "checking", "USD", 0)
+                .expect("account is created");
+        let older = FinanceRepository::create_transaction(
+            &database,
+            &scope,
+            &account.id,
+            None,
+            Some(&groceries.id),
+            "expense",
+            -200,
+            "USD",
+            "2026-01-01",
+            Some("Market"),
+            None,
+            None,
+            &[],
+        )
+        .expect("older entry is created");
+        let newer = FinanceRepository::create_transaction(
+            &database,
+            &scope,
+            &account.id,
+            None,
+            None,
+            "expense",
+            -300,
+            "USD",
+            "2026-01-02",
+            Some("Cafe"),
+            None,
+            None,
+            &[TransactionAllocationRequest { category_id: dining.id.clone(), minor_units: -300 }],
+        )
+        .expect("newer split entry is created");
+
+        let page = FinanceRepository::list_transactions(
+            &database,
+            &scope,
+            Some("2026-01-01"),
+            Some("2026-01-31"),
+            Some(&account.id),
+            Some(&dining.id),
+            Some("expense"),
+            Some("cafe"),
+            0,
+            20,
+        )
+        .expect("filtered history is listed");
+        let next_page = FinanceRepository::list_transactions(
+            &database,
+            &scope,
+            None,
+            None,
+            Some(&account.id),
+            None,
+            None,
+            None,
+            1,
+            1,
+        )
+        .expect("second page is listed");
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.transactions[0].id, newer.id);
+        assert_eq!(page.transactions[0].allocations[0].category_id, dining.id);
+        assert_eq!(next_page.transactions[0].id, older.id);
+    }
+
+    /// Proves a reversal is an atomic compensating fact with opposite category splits and no duplicate.
+    #[test]
+    fn reverses_an_income_or_expense_without_rewriting_history() {
+        let (_fixture, database, scope) = fixture();
+        let groceries =
+            FinanceRepository::create_category(&database, &scope, "Groceries", "expense", None, 1)
+                .expect("category is created");
+        let account =
+            FinanceRepository::create_account(&database, &scope, "Checking", "checking", "USD", 0)
+                .expect("account is created");
+        let original = FinanceRepository::create_transaction(
+            &database,
+            &scope,
+            &account.id,
+            None,
+            None,
+            "expense",
+            -750,
+            "USD",
+            "2026-02-01",
+            Some("Market"),
+            None,
+            None,
+            &[TransactionAllocationRequest {
+                category_id: groceries.id.clone(),
+                minor_units: -750,
+            }],
+        )
+        .expect("original split entry is created");
+
+        let correction = FinanceRepository::reverse_transaction(&database, &scope, &original.id)
+            .expect("reversal is created");
+        let duplicate = FinanceRepository::reverse_transaction(&database, &scope, &original.id)
+            .expect_err("a ledger fact can only have one reversal");
+
+        assert_eq!(correction.entry_type, "correction");
+        assert_eq!(correction.minor_units, "750");
+        assert_eq!(correction.allocations[0].minor_units, "750");
+        assert_eq!(duplicate.code, crate::application::ErrorCode::Conflict);
+        database.in_transaction(|transaction| {
+            let correction_count: i64 = transaction.query_row(
+                "SELECT COUNT(*) FROM transaction_corrections WHERE profile_id = ?1 AND original_transaction_id = ?2",
+                (scope.profile_id().as_str(), original.id), |row| row.get(0),
+            ).map_err(|_| crate::application::ApplicationError::internal())?;
+            assert_eq!(correction_count, 1);
+            Ok(())
+        }).expect("correction audit link is persisted");
     }
 }

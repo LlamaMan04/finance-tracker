@@ -3,7 +3,7 @@
 use crate::application::ApplicationError;
 use crate::application::contracts::{
     AccountDto, AllocationDto, BackupDto, BudgetAllocationDto, BudgetDto, CategoryDto,
-    ProfileSummaryDto, SessionStatusDto, TransactionDto, TransferDto,
+    ProfileSummaryDto, SessionStatusDto, TransactionDto, TransactionHistoryPageDto, TransferDto,
 };
 use crate::domain::{
     AccountId, AllocationId, BackupId, BudgetId, CategoryId, ProfileScope, TransactionId,
@@ -112,6 +112,13 @@ pub trait AccountService {
 
 /// Defines ledger operations that will be implemented after secure sessions exist.
 pub trait TransactionService {
+    /// Lists one deterministic profile-scoped page of immutable ledger history.
+    fn list(
+        &self,
+        scope: &ProfileScope,
+        request: TransactionHistoryRequest,
+    ) -> Result<TransactionHistoryPageDto, ApplicationError>;
+
     /// Records a normalized income or expense entry in the authenticated profile scope.
     fn create(
         &self,
@@ -231,6 +238,26 @@ pub struct CreateTransactionRequest {
     pub notes: Option<String>,
     /// Holds category splits that must total the transaction amount exactly.
     pub allocations: Vec<TransactionAllocationRequest>,
+}
+
+/// Holds the optional filters and bounded pagination used to read transaction history.
+pub struct TransactionHistoryRequest {
+    /// Holds an inclusive canonical local start date.
+    pub starts_on: Option<String>,
+    /// Holds an inclusive canonical local end date.
+    pub ends_on: Option<String>,
+    /// Restricts history to an account owned by the authenticated profile.
+    pub account_id: Option<String>,
+    /// Restricts history to a direct category or category split.
+    pub category_id: Option<String>,
+    /// Restricts history to one reviewed ledger entry type.
+    pub entry_type: Option<String>,
+    /// Holds optional payee, description, or note text to search case-insensitively.
+    pub search: Option<String>,
+    /// Holds the zero-based page number.
+    pub page: u32,
+    /// Holds the requested page size before repository bounds are applied.
+    pub page_size: u32,
 }
 
 /// Holds one exact category portion of a new immutable transaction.
