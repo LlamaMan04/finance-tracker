@@ -19,6 +19,7 @@ import type {
   ProfileSummary,
   SessionStatus,
   TransactionDto,
+  TransactionAdjustmentInput,
   TransactionHistoryInput,
   TransactionHistoryPageDto,
   TransferDto,
@@ -155,6 +156,11 @@ export class FinanceCommandClient {
   /** Creates an immutable equal-and-opposite correction for an eligible ledger entry. */
   async reverseTransaction(id: string): Promise<TransactionDto> {
     return this.invokeCommand<TransactionDto>("reverse_transaction", { id });
+  }
+
+  /** Records an immutable delta for an eligible ledger entry; no UI workflow invokes this in Phase 3. */
+  async adjustTransaction(request: TransactionAdjustmentInput): Promise<TransactionDto> {
+    return this.invokeCommand<TransactionDto>("adjust_transaction", { request });
   }
 
   /** Converts unknown Tauri failures into the reviewed frontend error shape. */

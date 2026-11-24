@@ -139,6 +139,13 @@ pub trait TransactionService {
         scope: &ProfileScope,
         transaction_id: &TransactionId,
     ) -> Result<TransactionDto, ApplicationError>;
+
+    /// Records an immutable delta that changes an eligible entry's amount, classification, or display text.
+    fn adjust(
+        &self,
+        scope: &ProfileScope,
+        request: AdjustTransactionRequest,
+    ) -> Result<TransactionDto, ApplicationError>;
 }
 
 /// Defines allocation operations that will be implemented after secure sessions exist.
@@ -266,6 +273,26 @@ pub struct TransactionAllocationRequest {
     pub category_id: String,
     /// Holds the signed portion in the same direction as the transaction.
     pub minor_units: i64,
+}
+
+/// Holds replacement values for an immutable ledger adjustment while retaining its original fact.
+pub struct AdjustTransactionRequest {
+    /// Identifies the original income or expense entry to adjust.
+    pub transaction_id: String,
+    /// Holds the corrected signed total in the original entry's currency.
+    pub adjusted_minor_units: i64,
+    /// Holds the corrected direct category when the entry is not split.
+    pub category_id: Option<String>,
+    /// Holds the corrected optional counterparty text.
+    pub payee: Option<String>,
+    /// Holds the corrected optional short description.
+    pub description: Option<String>,
+    /// Holds the corrected optional long-form notes.
+    pub notes: Option<String>,
+    /// Holds corrected category splits that must total the corrected amount exactly.
+    pub allocations: Vec<TransactionAllocationRequest>,
+    /// Explains the immutable audit correction without exposing internal diagnostics.
+    pub reason: String,
 }
 
 /// Holds the fields required to create or replace one period/category budget plan.

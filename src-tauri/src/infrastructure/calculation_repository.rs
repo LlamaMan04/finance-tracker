@@ -275,6 +275,7 @@ fn checked_sub(left: i64, right: i64) -> Result<i64, ApplicationError> {
 #[cfg(test)]
 mod tests {
     use super::CalculationRepository;
+    use crate::application::use_cases::AdjustTransactionRequest;
     use crate::domain::{ProfileId, ProfileScope};
     use crate::infrastructure::budget_allocation_repository::BudgetAllocationRepository;
     use crate::infrastructure::database::Database;
@@ -469,5 +470,80 @@ mod tests {
         assert_eq!(summary.remaining_minor_units, "-750");
         assert_eq!(summary.categories[0].actual_minor_units, "-250");
         assert_eq!(summary.categories[0].remaining_minor_units, "-750");
+    }
+
+    /// Proves an adjustment delta reconciles both balances and category budget actuals.
+    #[test]
+    fn calculates_adjusted_balances_and_budget_category_actuals() {
+        let (_fixture, database, scope) = fixture();
+        let budget = FinanceRepository::create_budget(&database, &scope, "Home", "USD")
+            .expect("budget is created");
+        let groceries =
+            FinanceRepository::create_category(&database, &scope, "Groceries", "expense", None, 1)
+                .expect("groceries category is created");
+        let dining =
+            FinanceRepository::create_category(&database, &scope, "Dining", "expense", None, 2)
+                .expect("dining category is created");
+        let account =
+            FinanceRepository::create_account(&database, &scope, "Checking", "checking", "USD", 0)
+                .expect("account is created");
+        let original = FinanceRepository::create_transaction(
+            &database,
+            &scope,
+            &account.id,
+            Some(&budget.id),
+            Some(&groceries.id),
+            "expense",
+            -1_000,
+            "USD",
+            "2024-02-29",
+            None,
+            None,
+            None,
+            &[],
+        )
+        .expect("expense is created");
+        FinanceRepository::adjust_transaction(
+            &database,
+            &scope,
+            AdjustTransactionRequest {
+                transaction_id: original.id,
+                adjusted_minor_units: -1_200,
+                category_id: Some(dining.id.clone()),
+                payee: None,
+                description: None,
+                notes: None,
+                allocations: vec![],
+                reason: "Corrected category and amount".to_owned(),
+            },
+        )
+        .expect("adjustment is created");
+
+        let finance_summary =
+            CalculationRepository::finance_summary(&database, &scope).expect("summary calculates");
+        let budget_summary = CalculationRepository::budget_summary(
+            &database,
+            &scope,
+            &budget.id,
+            "2024-02-01",
+            "2024-02-29",
+        )
+        .expect("budget summary calculates");
+        let groceries_actual = budget_summary
+            .categories
+            .iter()
+            .find(|category| category.category_id == groceries.id)
+            .expect("groceries result is present");
+        let dining_actual = budget_summary
+            .categories
+            .iter()
+            .find(|category| category.category_id == dining.id)
+            .expect("dining result is present");
+
+        assert_eq!(finance_summary.account_balances[0].balance_minor_units, "-1200");
+        assert_eq!(finance_summary.currency_totals[0].expense_minor_units, "-1200");
+        assert_eq!(budget_summary.actual_minor_units, "-1200");
+        assert_eq!(groceries_actual.actual_minor_units, "0");
+        assert_eq!(dining_actual.actual_minor_units, "-1200");
     }
 }

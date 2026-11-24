@@ -5,7 +5,7 @@ use crate::application::contracts::{
     AccountDto, BudgetAllocationDto, BudgetDto, BudgetSummaryDto, CategoryDto, FinanceSummaryDto,
     TransactionDto, TransactionHistoryPageDto, TransferDto,
 };
-use crate::application::use_cases::TransactionAllocationRequest;
+use crate::application::use_cases::{AdjustTransactionRequest, TransactionAllocationRequest};
 use crate::commands::safe_error;
 use crate::infrastructure::budget_allocation_repository::BudgetAllocationRepository;
 use crate::infrastructure::calculation_repository::CalculationRepository;
@@ -106,6 +106,20 @@ pub struct TransactionInput {
 pub struct TransactionAllocationInput {
     pub category_id: String,
     pub minor_units: String,
+}
+
+/// Accepts replacement values that the backend records as an immutable adjustment delta.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionAdjustmentInput {
+    pub transaction_id: String,
+    pub adjusted_minor_units: String,
+    pub category_id: Option<String>,
+    pub payee: Option<String>,
+    pub description: Option<String>,
+    pub notes: Option<String>,
+    pub allocations: Vec<TransactionAllocationInput>,
+    pub reason: String,
 }
 
 /// Accepts untrusted fields for one atomic transfer between active accounts.
@@ -507,6 +521,48 @@ pub fn reverse_transaction(
     service
         .with_active_profile(|scope, database| {
             FinanceRepository::reverse_transaction(database, scope, &id)
+        })
+        .map_err(safe_error)
+}
+
+/// Records an immutable amount or classification delta for one eligible ledger entry.
+#[tauri::command]
+pub fn adjust_transaction(
+    service: State<'_, LocalProfileService>,
+    request: TransactionAdjustmentInput,
+) -> Result<TransactionDto, ApplicationError> {
+    // Parses every exact integer before the protected write transaction begins.
+    let adjusted_minor_units = request
+        .adjusted_minor_units
+        .parse::<i64>()
+        .map_err(|_| safe_error(ApplicationError::validation()))?;
+    let allocations = request
+        .allocations
+        .into_iter()
+        .map(|allocation| {
+            allocation
+                .minor_units
+                .parse::<i64>()
+                .map(|minor_units| TransactionAllocationRequest {
+                    category_id: allocation.category_id,
+                    minor_units,
+                })
+                .map_err(|_| safe_error(ApplicationError::validation()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let adjustment = AdjustTransactionRequest {
+        transaction_id: request.transaction_id,
+        adjusted_minor_units,
+        category_id: request.category_id,
+        payee: request.payee,
+        description: request.description,
+        notes: request.notes,
+        allocations,
+        reason: request.reason,
+    };
+    service
+        .with_active_profile(|scope, database| {
+            FinanceRepository::adjust_transaction(database, scope, adjustment)
         })
         .map_err(safe_error)
 }

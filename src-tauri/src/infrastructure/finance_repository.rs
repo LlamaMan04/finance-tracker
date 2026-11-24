@@ -4,13 +4,13 @@ use crate::application::ApplicationError;
 use crate::application::contracts::{
     AccountDto, AllocationDto, BudgetDto, CategoryDto, TransactionDto, TransactionHistoryPageDto,
 };
-use crate::application::use_cases::TransactionAllocationRequest;
+use crate::application::use_cases::{AdjustTransactionRequest, TransactionAllocationRequest};
 use crate::domain::{
     AccountId, BudgetId, CategoryId, CurrencyCode, LocalDate, ProfileScope, TransactionId,
 };
 use crate::infrastructure::database::Database;
 use rusqlite::{Row, params, types::Value};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
 /// Reads or writes the protected reference data that transactions will later reference.
@@ -390,11 +390,11 @@ impl FinanceRepository {
             if !matches!(original.entry_type.as_str(), "income" | "expense") {
                 return Err(ApplicationError::validation());
             }
-            let already_reversed: i64 = transaction.query_row(
-                "SELECT COUNT(*) FROM transaction_corrections WHERE profile_id = ?1 AND original_transaction_id = ?2 AND correction_kind = 'reversal'",
+            let existing_correction_count: i64 = transaction.query_row(
+                "SELECT COUNT(*) FROM transaction_corrections WHERE profile_id = ?1 AND original_transaction_id = ?2",
                 params![scope.profile_id().as_str(), transaction_id.as_str()], |row| row.get(0),
             ).map_err(|_| ApplicationError::internal())?;
-            if already_reversed != 0 {
+            if existing_correction_count != 0 {
                 return Err(ApplicationError::conflict());
             }
             let reversed_minor_units = original.minor_units.parse::<i64>()
@@ -421,6 +421,89 @@ impl FinanceRepository {
                 params![new_id("correction"), scope.profile_id().as_str(), transaction_id.as_str(), correction_id],
             ).map_err(|_| ApplicationError::conflict())?;
             Ok(TransactionDto { id: correction_id, minor_units: reversed_minor_units.to_string(), entry_type: "correction".to_owned(), allocations, ..original })
+        })
+    }
+
+    /// Records one immutable adjustment delta while preserving the original ledger fact unchanged.
+    pub fn adjust_transaction(
+        database: &Database,
+        scope: &ProfileScope,
+        request: AdjustTransactionRequest,
+    ) -> Result<TransactionDto, ApplicationError> {
+        let transaction_id = TransactionId::parse(&request.transaction_id)?;
+        let category_id = request.category_id.as_deref().map(CategoryId::parse).transpose()?;
+        let payee = validate_optional_text(request.payee.as_deref(), 200)?;
+        let description = validate_optional_text(request.description.as_deref(), 500)?;
+        let notes = validate_optional_text(request.notes.as_deref(), 4_000)?;
+        let reason = validate_text(&request.reason, 500)?;
+
+        database.in_transaction(|transaction| {
+            let original = transaction.query_row(
+                "SELECT id, account_id, budget_id, category_id, minor_units, currency, occurred_on, entry_type, payee, description, notes FROM transactions WHERE profile_id = ?1 AND id = ?2",
+                params![scope.profile_id().as_str(), transaction_id.as_str()], transaction_from_row,
+            ).map_err(|_| ApplicationError::not_found())?;
+            if !matches!(original.entry_type.as_str(), "income" | "expense") {
+                return Err(ApplicationError::validation());
+            }
+            let existing_correction_count: i64 = transaction.query_row(
+                "SELECT COUNT(*) FROM transaction_corrections WHERE profile_id = ?1 AND original_transaction_id = ?2",
+                params![scope.profile_id().as_str(), transaction_id.as_str()], |row| row.get(0),
+            ).map_err(|_| ApplicationError::internal())?;
+            if existing_correction_count != 0 {
+                return Err(ApplicationError::conflict());
+            }
+
+            validate_entry_amount(&original.entry_type, request.adjusted_minor_units)?;
+            let target_allocations = validate_allocation_requests(
+                &request.allocations,
+                category_id.as_ref(),
+                &original.entry_type,
+                request.adjusted_minor_units,
+            )?;
+            validate_active_category(transaction, scope, category_id.as_ref(), &original.entry_type)?;
+            for allocation in &target_allocations {
+                validate_active_category(transaction, scope, Some(&allocation.category_id), &original.entry_type)?;
+            }
+
+            let original_minor_units = original
+                .minor_units
+                .parse::<i64>()
+                .map_err(|_| ApplicationError::internal())?;
+            let correction_minor_units = request
+                .adjusted_minor_units
+                .checked_sub(original_minor_units)
+                .ok_or_else(ApplicationError::validation)?;
+            let original_allocations = load_allocations(transaction, scope, transaction_id.as_str())?;
+            let original_amounts = allocation_amounts(
+                original.category_id.as_deref(),
+                original_minor_units,
+                &original_allocations,
+            )?;
+            let target_amounts = requested_allocation_amounts(
+                category_id.as_ref(),
+                request.adjusted_minor_units,
+                &target_allocations,
+            );
+            let correction_amounts = correction_allocation_amounts(&original_amounts, &target_amounts)?;
+            let correction_id = new_id("transaction");
+            transaction.execute(
+                "INSERT INTO transactions (id, profile_id, account_id, budget_id, category_id, occurred_on, entry_type, minor_units, currency, payee, description, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, NULL, ?5, 'correction', ?6, ?7, ?8, ?9, ?10, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                params![correction_id, scope.profile_id().as_str(), original.account_id, original.budget_id, original.occurred_on, correction_minor_units, original.currency, payee, description, notes],
+            ).map_err(|_| ApplicationError::conflict())?;
+            let mut allocations = Vec::with_capacity(correction_amounts.len());
+            for (category_id, minor_units) in correction_amounts {
+                let allocation_id = new_id("allocation");
+                transaction.execute(
+                    "INSERT INTO transaction_allocations (id, profile_id, transaction_id, category_id, minor_units, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                    params![allocation_id, scope.profile_id().as_str(), correction_id, category_id, minor_units],
+                ).map_err(|_| ApplicationError::conflict())?;
+                allocations.push(AllocationDto { id: allocation_id, transaction_id: correction_id.clone(), category_id, minor_units: minor_units.to_string() });
+            }
+            transaction.execute(
+                "INSERT INTO transaction_corrections (id, profile_id, original_transaction_id, correction_transaction_id, correction_kind, reason, created_at) VALUES (?1, ?2, ?3, ?4, 'adjustment', ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                params![new_id("correction"), scope.profile_id().as_str(), transaction_id.as_str(), correction_id, reason],
+            ).map_err(|_| ApplicationError::conflict())?;
+            Ok(TransactionDto { id: correction_id, category_id: None, minor_units: correction_minor_units.to_string(), entry_type: "correction".to_owned(), payee, description, notes, allocations, ..original })
         })
     }
 }
@@ -516,6 +599,66 @@ fn load_allocations(
         })
         .map_err(|_| ApplicationError::internal())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApplicationError::internal())
+}
+
+/// Represents direct categories and split rows as category totals for immutable adjustment math.
+fn allocation_amounts(
+    category_id: Option<&str>,
+    minor_units: i64,
+    allocations: &[AllocationDto],
+) -> Result<BTreeMap<String, i64>, ApplicationError> {
+    let mut amounts = BTreeMap::new();
+    if allocations.is_empty() {
+        if let Some(category_id) = category_id {
+            amounts.insert(category_id.to_owned(), minor_units);
+        }
+        return Ok(amounts);
+    }
+    for allocation in allocations {
+        let amount =
+            allocation.minor_units.parse::<i64>().map_err(|_| ApplicationError::internal())?;
+        amounts.insert(allocation.category_id.clone(), amount);
+    }
+    Ok(amounts)
+}
+
+/// Converts validated replacement splits into their category totals for delta calculation.
+fn requested_allocation_amounts(
+    category_id: Option<&CategoryId>,
+    minor_units: i64,
+    allocations: &[ValidatedAllocation],
+) -> BTreeMap<String, i64> {
+    let mut amounts = BTreeMap::new();
+    if allocations.is_empty() {
+        if let Some(category_id) = category_id {
+            amounts.insert(category_id.as_str().to_owned(), minor_units);
+        }
+        return amounts;
+    }
+    for allocation in allocations {
+        amounts.insert(allocation.category_id.as_str().to_owned(), allocation.minor_units);
+    }
+    amounts
+}
+
+/// Calculates category deltas so an adjustment moves budget actuals from original to corrected values.
+fn correction_allocation_amounts(
+    original: &BTreeMap<String, i64>,
+    adjusted: &BTreeMap<String, i64>,
+) -> Result<BTreeMap<String, i64>, ApplicationError> {
+    let mut amounts = BTreeMap::new();
+    let category_ids = original.keys().chain(adjusted.keys()).collect::<HashSet<_>>();
+    for category_id in category_ids {
+        let original_amount = original.get(category_id).copied().unwrap_or_default();
+        let adjusted_amount = adjusted.get(category_id).copied().unwrap_or_default();
+        let delta = adjusted_amount
+            .checked_sub(original_amount)
+            .ok_or_else(ApplicationError::validation)?;
+        if delta != 0 {
+            amounts.insert(category_id.clone(), delta);
+        }
+    }
+    Ok(amounts)
 }
 
 /// Validates a complete split before any ledger write so the transaction and its portions commit together.
@@ -741,7 +884,7 @@ fn account_from_row(row: &Row<'_>) -> rusqlite::Result<AccountDto> {
 #[cfg(test)]
 mod tests {
     use super::FinanceRepository;
-    use crate::application::use_cases::TransactionAllocationRequest;
+    use crate::application::use_cases::{AdjustTransactionRequest, TransactionAllocationRequest};
     use crate::domain::{ProfileId, ProfileScope};
     use crate::infrastructure::test_support::TemporaryDatabase;
     use crate::ports::security::KeyDerivationPort;
@@ -1140,5 +1283,102 @@ mod tests {
             assert_eq!(correction_count, 1);
             Ok(())
         }).expect("correction audit link is persisted");
+    }
+
+    /// Proves an adjustment preserves the original while atomically moving its category and amount.
+    #[test]
+    fn adjusts_an_entry_with_a_single_auditable_delta() {
+        let (_fixture, database, scope) = fixture();
+        let budget = FinanceRepository::create_budget(&database, &scope, "Home", "USD")
+            .expect("budget is created");
+        let groceries =
+            FinanceRepository::create_category(&database, &scope, "Groceries", "expense", None, 1)
+                .expect("groceries category is created");
+        let dining =
+            FinanceRepository::create_category(&database, &scope, "Dining", "expense", None, 2)
+                .expect("dining category is created");
+        let account =
+            FinanceRepository::create_account(&database, &scope, "Checking", "checking", "USD", 0)
+                .expect("account is created");
+        let original = FinanceRepository::create_transaction(
+            &database,
+            &scope,
+            &account.id,
+            Some(&budget.id),
+            Some(&groceries.id),
+            "expense",
+            -1_000,
+            "USD",
+            "2026-02-01",
+            Some("Market"),
+            Some("Weekly shop"),
+            None,
+            &[],
+        )
+        .expect("original entry is created");
+
+        let correction = FinanceRepository::adjust_transaction(
+            &database,
+            &scope,
+            AdjustTransactionRequest {
+                transaction_id: original.id.clone(),
+                adjusted_minor_units: -1_200,
+                category_id: Some(dining.id.clone()),
+                payee: Some("Restaurant".to_owned()),
+                description: Some("Corrected receipt".to_owned()),
+                notes: Some("Receipt category was wrong".to_owned()),
+                allocations: vec![],
+                reason: "Corrected receipt amount and category".to_owned(),
+            },
+        )
+        .expect("adjustment is created");
+        let duplicate = FinanceRepository::adjust_transaction(
+            &database,
+            &scope,
+            AdjustTransactionRequest {
+                transaction_id: original.id.clone(),
+                adjusted_minor_units: -1_100,
+                category_id: Some(dining.id.clone()),
+                payee: None,
+                description: None,
+                notes: None,
+                allocations: vec![],
+                reason: "A second change".to_owned(),
+            },
+        )
+        .expect_err("an original fact has only one direct correction");
+
+        assert_eq!(correction.entry_type, "correction");
+        assert_eq!(correction.minor_units, "-200");
+        assert_eq!(correction.category_id, None);
+        assert_eq!(correction.allocations.len(), 2);
+        let groceries_delta = correction
+            .allocations
+            .iter()
+            .find(|allocation| allocation.category_id == groceries.id)
+            .expect("groceries delta is present");
+        let dining_delta = correction
+            .allocations
+            .iter()
+            .find(|allocation| allocation.category_id == dining.id)
+            .expect("dining delta is present");
+        assert_eq!(groceries_delta.minor_units, "1000");
+        assert_eq!(dining_delta.minor_units, "-1200");
+        assert_eq!(duplicate.code, crate::application::ErrorCode::Conflict);
+        database.in_transaction(|transaction| {
+            let original_amount: i64 = transaction.query_row(
+                "SELECT minor_units FROM transactions WHERE profile_id = ?1 AND id = ?2",
+                (scope.profile_id().as_str(), original.id.as_str()),
+                |row| row.get(0),
+            ).map_err(|_| crate::application::ApplicationError::internal())?;
+            let correction_kind: String = transaction.query_row(
+                "SELECT correction_kind FROM transaction_corrections WHERE profile_id = ?1 AND correction_transaction_id = ?2",
+                (scope.profile_id().as_str(), correction.id.as_str()),
+                |row| row.get(0),
+            ).map_err(|_| crate::application::ApplicationError::internal())?;
+            assert_eq!(original_amount, -1_000);
+            assert_eq!(correction_kind, "adjustment");
+            Ok(())
+        }).expect("original and audit link are retained");
     }
 }

@@ -322,6 +322,26 @@ export interface TransactionInput {
   allocations: TransactionAllocationInput[];
 }
 
+/** Carries corrected transaction values; Rust records only the immutable delta from the original. */
+export interface TransactionAdjustmentInput {
+  /** Identifies the original income or expense entry. */
+  transactionId: string;
+  /** Supplies the corrected signed total in the original entry's currency. */
+  adjustedMinorUnits: string;
+  /** Supplies the corrected direct category when the entry is not split. */
+  categoryId: string | null;
+  /** Supplies corrected optional counterparty text. */
+  payee: string | null;
+  /** Supplies corrected optional short description. */
+  description: string | null;
+  /** Supplies corrected optional long-form notes. */
+  notes: string | null;
+  /** Supplies corrected category splits that must total the corrected amount exactly. */
+  allocations: TransactionAllocationInput[];
+  /** Supplies an audit explanation for the immutable correction. */
+  reason: string;
+}
+
 /** Carries one positive transfer amount between two active, same-currency accounts. */
 export interface TransferInput {
   /** Identifies the account from which the amount is debited. */

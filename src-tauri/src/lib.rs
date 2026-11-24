@@ -7,11 +7,11 @@ pub mod security;
 
 use crate::application::ApplicationError;
 use crate::commands::finance::{
-    archive_account, archive_budget, archive_category, create_account, create_budget,
-    create_category, create_transaction, create_transfer, get_budget_summary, get_finance_summary,
-    list_accounts, list_budget_allocations, list_budgets, list_categories, list_transactions,
-    remove_budget_allocation, reverse_transaction, update_account, update_budget, update_category,
-    upsert_budget_allocation,
+    adjust_transaction, archive_account, archive_budget, archive_category, create_account,
+    create_budget, create_category, create_transaction, create_transfer, get_budget_summary,
+    get_finance_summary, list_accounts, list_budget_allocations, list_budgets, list_categories,
+    list_transactions, remove_budget_allocation, reverse_transaction, update_account,
+    update_budget, update_category, upsert_budget_allocation,
 };
 use crate::commands::profile::{
     create_profile, get_session_status, list_profiles, lock_profile, record_session_activity,
@@ -63,7 +63,8 @@ pub fn run() {
             create_transaction,
             create_transfer,
             list_transactions,
-            reverse_transaction
+            reverse_transaction,
+            adjust_transaction
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
