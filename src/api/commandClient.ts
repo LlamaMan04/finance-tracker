@@ -16,6 +16,8 @@ import type {
   ProfileSummary,
   SessionStatus,
   TransactionDto,
+  TransferDto,
+  TransferInput,
   TransactionInput,
   UnlockProfileInput,
 } from "./contracts";
@@ -123,6 +125,11 @@ export class FinanceCommandClient {
   /** Records one protected income or expense entry in the active profile. */
   async createTransaction(request: TransactionInput): Promise<TransactionDto> {
     return this.invokeCommand<TransactionDto>("create_transaction", { request });
+  }
+
+  /** Records two linked transfer entries in the active protected profile. */
+  async createTransfer(request: TransferInput): Promise<TransferDto> {
+    return this.invokeCommand<TransferDto>("create_transfer", { request });
   }
 
   /** Converts unknown Tauri failures into the reviewed frontend error shape. */

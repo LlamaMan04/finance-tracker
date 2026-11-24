@@ -5,6 +5,7 @@ import type {
   BudgetDto,
   CategoryDto,
   TransactionDto,
+  TransferDto,
 } from "../api/contracts";
 import { FinanceCommandClient } from "../api/commandClient";
 import { ErrorNotice } from "./ErrorNotice";
@@ -52,6 +53,8 @@ export function FinanceWorkspace({
   const [lastRecordedTransaction, setLastRecordedTransaction] = useState<TransactionDto | null>(
     null,
   );
+  /** Shows the safe normalized transfer result without retaining an independent ledger copy. */
+  const [lastRecordedTransfer, setLastRecordedTransfer] = useState<TransferDto | null>(null);
   /** Holds a safe UI error and never raw backend diagnostics. */
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   /** Prevents duplicate finance submissions while a command is running. */
@@ -189,6 +192,29 @@ export function FinanceWorkspace({
       setTransactionKind("expense");
       setIsSplitTransaction(false);
       setAllocationRows([]);
+    });
+  }
+
+  /** Records one reviewed transfer after confirming its immutable paired ledger effect. */
+  function submitTransfer(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    /** Retains the form element beyond the submit event lifetime. */
+    const form = event.currentTarget;
+    /** Captures fields synchronously before the async command begins. */
+    const values = new FormData(form);
+    if (!window.confirm("Record this transfer? It creates immutable entries in both accounts.")) {
+      return;
+    }
+    void mutate(async () => {
+      const transfer = await commandClient.createTransfer({
+        sourceAccountId: String(values.get("transferSourceAccountId") ?? ""),
+        destinationAccountId: String(values.get("transferDestinationAccountId") ?? ""),
+        minorUnits: String(values.get("transferMinorUnits") ?? ""),
+        currency: String(values.get("transferCurrency") ?? ""),
+        occurredOn: String(values.get("transferOccurredOn") ?? ""),
+      });
+      setLastRecordedTransfer(transfer);
+      form.reset();
     });
   }
 
@@ -589,6 +615,52 @@ export function FinanceWorkspace({
               ? ` across ${lastRecordedTransaction.allocations.length} categories`
               : ""}
             .
+          </p>
+        )}
+      </section>
+      <section aria-labelledby="transfers-heading" className="finance-section">
+        <h2 id="transfers-heading">Transfer between accounts</h2>
+        <p>Enter a positive amount. Transfers do not count as income, expenses, or budget activity.</p>
+        <form onSubmit={submitTransfer}>
+          <label htmlFor="transfer-source-account">From account</label>
+          <select id="transfer-source-account" name="transferSourceAccountId" required>
+            <option value="">Choose the source account</option>
+            {accounts
+              .filter((account) => !account.isArchived)
+              .map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name} ({account.currency})
+                </option>
+              ))}
+          </select>
+          <label htmlFor="transfer-destination-account">To account</label>
+          <select id="transfer-destination-account" name="transferDestinationAccountId" required>
+            <option value="">Choose the destination account</option>
+            {accounts
+              .filter((account) => !account.isArchived)
+              .map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name} ({account.currency})
+                </option>
+              ))}
+          </select>
+          <label htmlFor="transfer-minor-units">Amount (minor units)</label>
+          <input id="transfer-minor-units" inputMode="numeric" name="transferMinorUnits" required />
+          <label htmlFor="transfer-currency">Currency</label>
+          <input
+            defaultValue="USD"
+            id="transfer-currency"
+            maxLength={3}
+            name="transferCurrency"
+            required
+          />
+          <label htmlFor="transfer-occurred-on">Date</label>
+          <input id="transfer-occurred-on" name="transferOccurredOn" required type="date" />
+          <button disabled={disabled}>Record transfer</button>
+        </form>
+        {lastRecordedTransfer !== null && (
+          <p aria-live="polite">
+            Transferred {lastRecordedTransfer.destinationTransaction.minorUnits} {lastRecordedTransfer.destinationTransaction.currency} from one account to another on {lastRecordedTransfer.destinationTransaction.occurredOn}.
           </p>
         )}
       </section>

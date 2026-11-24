@@ -3,7 +3,7 @@
 use crate::application::ApplicationError;
 use crate::application::contracts::{
     AccountDto, AllocationDto, BackupDto, BudgetAllocationDto, BudgetDto, CategoryDto,
-    ProfileSummaryDto, SessionStatusDto, TransactionDto,
+    ProfileSummaryDto, SessionStatusDto, TransactionDto, TransferDto,
 };
 use crate::domain::{
     AccountId, AllocationId, BackupId, BudgetId, CategoryId, ProfileScope, TransactionId,
@@ -124,7 +124,7 @@ pub trait TransactionService {
         &self,
         scope: &ProfileScope,
         request: CreateTransferRequest,
-    ) -> Result<(TransactionDto, TransactionDto), ApplicationError>;
+    ) -> Result<TransferDto, ApplicationError>;
 
     /// Reverses an applicable entry without silently rewriting financial history.
     fn reverse(

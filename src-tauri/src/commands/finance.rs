@@ -2,12 +2,13 @@
 
 use crate::application::ApplicationError;
 use crate::application::contracts::{
-    AccountDto, BudgetAllocationDto, BudgetDto, CategoryDto, TransactionDto,
+    AccountDto, BudgetAllocationDto, BudgetDto, CategoryDto, TransactionDto, TransferDto,
 };
 use crate::application::use_cases::TransactionAllocationRequest;
 use crate::commands::safe_error;
 use crate::infrastructure::budget_allocation_repository::BudgetAllocationRepository;
 use crate::infrastructure::finance_repository::FinanceRepository;
+use crate::infrastructure::transfer_repository::TransferRepository;
 use crate::security::LocalProfileService;
 use serde::Deserialize;
 use tauri::State;
@@ -103,6 +104,17 @@ pub struct TransactionInput {
 pub struct TransactionAllocationInput {
     pub category_id: String,
     pub minor_units: String,
+}
+
+/// Accepts untrusted fields for one atomic transfer between active accounts.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferInput {
+    pub source_account_id: String,
+    pub destination_account_id: String,
+    pub minor_units: String,
+    pub currency: String,
+    pub occurred_on: String,
 }
 
 /// Lists protected budgets only after the active profile has authenticated.
@@ -375,6 +387,32 @@ pub fn create_transaction(
                 request.description.as_deref(),
                 request.notes.as_deref(),
                 &allocations,
+            )
+        })
+        .map_err(safe_error)
+}
+
+/// Records linked transfer facts in the authenticated profile without using budget categories.
+#[tauri::command]
+pub fn create_transfer(
+    service: State<'_, LocalProfileService>,
+    request: TransferInput,
+) -> Result<TransferDto, ApplicationError> {
+    // Parses the exact amount before the repository opens its all-or-nothing write transaction.
+    let minor_units = request
+        .minor_units
+        .parse::<i64>()
+        .map_err(|_| safe_error(ApplicationError::validation()))?;
+    service
+        .with_active_profile(|scope, database| {
+            TransferRepository::create(
+                database,
+                scope,
+                &request.source_account_id,
+                &request.destination_account_id,
+                minor_units,
+                &request.currency,
+                &request.occurred_on,
             )
         })
         .map_err(safe_error)

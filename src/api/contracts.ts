@@ -183,6 +183,14 @@ export interface TransactionDto {
   allocations: TransactionAllocationDto[];
 }
 
+/** Describes the linked ledger facts created by one atomic account transfer. */
+export interface TransferDto {
+  /** Holds the negative source-account entry. */
+  sourceTransaction: TransactionDto;
+  /** Holds the positive destination-account entry. */
+  destinationTransaction: TransactionDto;
+}
+
 /** Describes one normalized category portion of a transaction. */
 export interface TransactionAllocationDto {
   /** Holds the stable allocation identifier. */
@@ -227,4 +235,18 @@ export interface TransactionInput {
   notes: string | null;
   /** Supplies optional category splits which must total the transaction exactly. */
   allocations: TransactionAllocationInput[];
+}
+
+/** Carries one positive transfer amount between two active, same-currency accounts. */
+export interface TransferInput {
+  /** Identifies the account from which the amount is debited. */
+  sourceAccountId: string;
+  /** Identifies the account to which the amount is credited. */
+  destinationAccountId: string;
+  /** Stores the positive exact minor-unit amount without JavaScript numeric conversion. */
+  minorUnits: string;
+  /** Supplies the accounts' shared uppercase ISO-style currency code. */
+  currency: string;
+  /** Supplies the canonical local calendar date. */
+  occurredOn: string;
 }

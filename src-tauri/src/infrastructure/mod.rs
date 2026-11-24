@@ -6,6 +6,7 @@ pub mod finance_repository;
 mod migrations;
 pub mod profile_metadata;
 pub mod profile_registry;
+pub mod transfer_repository;
 
 #[cfg(test)]
 pub(crate) mod test_support;

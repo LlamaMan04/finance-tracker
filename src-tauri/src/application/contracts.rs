@@ -122,6 +122,16 @@ pub struct TransactionDto {
     pub allocations: Vec<AllocationDto>,
 }
 
+/// Carries the two normalized ledger facts created by one atomic account transfer.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferDto {
+    /// Holds the negative transfer fact recorded against the source account.
+    pub source_transaction: TransactionDto,
+    /// Holds the positive transfer fact recorded against the destination account.
+    pub destination_transaction: TransactionDto,
+}
+
 /// Carries a transaction-to-budget allocation without financial calculation logic in the UI.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
