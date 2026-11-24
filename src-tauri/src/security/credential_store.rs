@@ -1,9 +1,11 @@
 //! Optional operating-system credential storage for passphrase-authorized profile keys.
 
+use crate::ports::security::{CredentialStorePort, DatabaseKey, SecurityResult};
+
+#[cfg(windows)]
 use crate::application::ApplicationError;
-use crate::ports::security::{
-    CredentialStorePort, DATABASE_KEY_LENGTH, DatabaseKey, SecurityResult,
-};
+#[cfg(windows)]
+use crate::ports::security::DATABASE_KEY_LENGTH;
 
 /// Provides the platform credential store while allowing unsupported platforms to use passphrase-only unlock.
 #[derive(Default)]
@@ -73,7 +75,7 @@ impl CredentialStorePort for PlatformCredentialStore {
 
         let mut target_name = wide_null(reference);
         let mut user_name = wide_null("Finance Tracker");
-        let mut credential = CREDENTIALW {
+        let credential = CREDENTIALW {
             Type: CRED_TYPE_GENERIC,
             TargetName: target_name.as_mut_ptr(),
             CredentialBlobSize: DATABASE_KEY_LENGTH as u32,
@@ -83,7 +85,7 @@ impl CredentialStorePort for PlatformCredentialStore {
             ..Default::default()
         };
         // SAFETY: every pointer in the credential references live buffers for the duration of this call.
-        let write_succeeded = unsafe { CredWriteW(&mut credential, 0) } != 0;
+        let write_succeeded = unsafe { CredWriteW(&credential, 0) } != 0;
         if write_succeeded { Ok(()) } else { Err(ApplicationError::internal()) }
     }
 }
