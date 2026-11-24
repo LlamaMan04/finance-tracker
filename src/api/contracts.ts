@@ -94,6 +94,67 @@ export interface AccountDto {
   isArchived: boolean;
 }
 
+/** Describes one exact Rust-derived account balance. */
+export interface AccountBalanceDto {
+  /** Holds the stable account identifier. */
+  accountId: string;
+  /** Holds the account label, including archived accounts. */
+  accountName: string;
+  /** Holds the currency paired with the balance. */
+  currency: string;
+  /** Stores the exact derived balance without JavaScript arithmetic. */
+  balanceMinorUnits: string;
+  /** Marks whether this historical account is archived. */
+  isArchived: boolean;
+}
+
+/** Describes exact signed income and expense totals for one currency. */
+export interface CurrencyTotalsDto {
+  /** Holds the shared currency. */
+  currency: string;
+  /** Stores the signed net income amount. */
+  incomeMinorUnits: string;
+  /** Stores the signed net expense amount. */
+  expenseMinorUnits: string;
+}
+
+/** Carries Rust-authoritative account balances and totals for the active profile. */
+export interface FinanceSummaryDto {
+  /** Holds each profile account's derived balance. */
+  accountBalances: AccountBalanceDto[];
+  /** Holds totals separated by currency. */
+  currencyTotals: CurrencyTotalsDto[];
+}
+
+/** Carries one category's planned, actual, and remaining signed budget amounts. */
+export interface BudgetCategorySummaryDto {
+  categoryId: string;
+  categoryName: string;
+  categoryKind: "income" | "expense";
+  plannedMinorUnits: string;
+  actualMinorUnits: string;
+  remainingMinorUnits: string;
+}
+
+/** Carries Rust-authoritative calculation results for one inclusive budget period. */
+export interface BudgetSummaryDto {
+  budgetId: string;
+  currency: string;
+  periodStartsOn: string;
+  periodEndsOn: string;
+  plannedMinorUnits: string;
+  actualMinorUnits: string;
+  remainingMinorUnits: string;
+  categories: BudgetCategorySummaryDto[];
+}
+
+/** Carries a selected budget and exact inclusive period to Rust for calculation. */
+export interface BudgetSummaryInput {
+  budgetId: string;
+  periodStartsOn: string;
+  periodEndsOn: string;
+}
+
 /** Carries new budget fields directly to the Rust command boundary. */
 export interface BudgetInput {
   name: string;

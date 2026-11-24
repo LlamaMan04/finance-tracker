@@ -3,7 +3,9 @@ import type {
   AccountDto,
   BudgetAllocationDto,
   BudgetDto,
+  BudgetSummaryDto,
   CategoryDto,
+  FinanceSummaryDto,
   TransactionDto,
   TransactionHistoryInput,
   TransferDto,
@@ -44,6 +46,10 @@ export function FinanceWorkspace({
   const [accounts, setAccounts] = useState<AccountDto[]>([]);
   /** Holds Rust-authoritative planned budget category amounts for the active profile only. */
   const [budgetAllocations, setBudgetAllocations] = useState<BudgetAllocationDto[]>([]);
+  /** Holds protected balances and totals calculated only by Rust. */
+  const [financeSummary, setFinanceSummary] = useState<FinanceSummaryDto | null>(null);
+  /** Holds one selected period's protected Rust-derived budget results. */
+  const [budgetSummary, setBudgetSummary] = useState<BudgetSummaryDto | null>(null);
   /** Tracks the selected ledger kind so the category choices remain applicable. */
   const [transactionKind, setTransactionKind] = useState<"income" | "expense">("expense");
   /** Chooses whether the entry uses one category or exact category portions. */
@@ -78,12 +84,13 @@ export function FinanceWorkspace({
 
   /** Loads all reference data together after the profile becomes authenticated. */
   async function refresh() {
-    const [nextBudgets, nextCategories, nextAccounts, nextBudgetAllocations, nextHistory] = await Promise.all([
+    const [nextBudgets, nextCategories, nextAccounts, nextBudgetAllocations, nextHistory, nextFinanceSummary] = await Promise.all([
       commandClient.listBudgets(),
       commandClient.listCategories(),
       commandClient.listAccounts(),
       commandClient.listBudgetAllocations(),
       commandClient.listTransactions(historyRequest),
+      commandClient.getFinanceSummary(),
     ]);
     setBudgets(nextBudgets);
     setCategories(nextCategories);
@@ -91,6 +98,7 @@ export function FinanceWorkspace({
     setBudgetAllocations(nextBudgetAllocations);
     setHistoryTransactions(nextHistory.transactions);
     setHistoryTotalCount(nextHistory.totalCount);
+    setFinanceSummary(nextFinanceSummary);
   }
 
   /** Fetches an explicitly selected filter page while preserving Rust as the ledger source of truth. */
@@ -189,6 +197,22 @@ export function FinanceWorkspace({
       });
       form.reset();
     });
+  }
+
+  /** Requests an exact selected-period calculation without reproducing finance arithmetic in React. */
+  function submitBudgetSummary(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    /** Captures query fields before the asynchronous protected command begins. */
+    const values = new FormData(event.currentTarget);
+    setErrorMessage(null);
+    void commandClient
+      .getBudgetSummary({
+        budgetId: String(values.get("summaryBudgetId") ?? ""),
+        periodStartsOn: String(values.get("summaryPeriodStartsOn") ?? ""),
+        periodEndsOn: String(values.get("summaryPeriodEndsOn") ?? ""),
+      })
+      .then(setBudgetSummary)
+      .catch(() => setErrorMessage("The supplied value is invalid or the operation could not be completed."));
   }
 
   /** Records one signed income or expense fact and displays only Rust's normalized response. */
@@ -362,6 +386,38 @@ export function FinanceWorkspace({
         </div>
       </header>
       <ErrorNotice message={errorMessage} />
+      <section aria-labelledby="summary-heading" className="finance-section">
+        <h2 id="summary-heading">Balances and totals</h2>
+        {financeSummary === null ? (
+          <p>Loading protected calculations…</p>
+        ) : (
+          <>
+            <ul className="record-list">
+              {financeSummary.accountBalances.map((account) => (
+                <li key={account.accountId}>
+                  <span>
+                    {account.accountName} · balance {account.balanceMinorUnits} {account.currency}
+                    {account.isArchived ? " · archived" : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {financeSummary.currencyTotals.length === 0 ? (
+              <p>No income or expense activity yet.</p>
+            ) : (
+              <ul className="record-list">
+                {financeSummary.currencyTotals.map((totals) => (
+                  <li key={totals.currency}>
+                    <span>
+                      {totals.currency} · income {totals.incomeMinorUnits} · expenses {totals.expenseMinorUnits}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </section>
       <section aria-labelledby="budgets-heading" className="finance-section">
         <h2 id="budgets-heading">Budgets</h2>
         <form onSubmit={submitBudget}>
@@ -484,6 +540,27 @@ export function FinanceWorkspace({
             }
           }}
         />
+      </section>
+      <section aria-labelledby="budget-summary-heading" className="finance-section">
+        <h2 id="budget-summary-heading">Budget period results</h2>
+        <p>Amounts use the ledger sign convention: income is positive and expenses are negative.</p>
+        <form onSubmit={submitBudgetSummary}>
+          <label htmlFor="summary-budget">Budget</label>
+          <select id="summary-budget" name="summaryBudgetId" required>
+            <option value="">Choose a budget</option>
+            {budgets.map((budget) => (
+              <option key={budget.id} value={budget.id}>
+                {budget.name} ({budget.currency})
+              </option>
+            ))}
+          </select>
+          <label htmlFor="summary-period-start">Period starts</label>
+          <input id="summary-period-start" name="summaryPeriodStartsOn" required type="date" />
+          <label htmlFor="summary-period-end">Period ends</label>
+          <input id="summary-period-end" name="summaryPeriodEndsOn" required type="date" />
+          <button disabled={disabled}>Calculate budget results</button>
+        </form>
+        {budgetSummary !== null && <BudgetSummaryList summary={budgetSummary} />}
       </section>
       <section aria-labelledby="accounts-heading" className="finance-section">
         <h2 id="accounts-heading">Accounts</h2>
@@ -851,6 +928,30 @@ function BudgetAllocationList({
         );
       })}
     </ul>
+  );
+}
+
+/** Renders Rust-derived period results as accessible text rather than a frontend calculation. */
+function BudgetSummaryList({ summary }: { summary: BudgetSummaryDto }) {
+  return (
+    <div aria-live="polite">
+      <p>
+        {summary.periodStartsOn} to {summary.periodEndsOn} · planned {summary.plannedMinorUnits} · actual {summary.actualMinorUnits} · remaining {summary.remainingMinorUnits} {summary.currency}.
+      </p>
+      {summary.categories.length === 0 ? (
+        <p>No planned or categorized activity matches this exact budget period.</p>
+      ) : (
+        <ul className="record-list">
+          {summary.categories.map((category) => (
+            <li key={category.categoryId}>
+              <span>
+                {category.categoryName} · {category.categoryKind} · planned {category.plannedMinorUnits} · actual {category.actualMinorUnits} · remaining {category.remainingMinorUnits}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

@@ -92,6 +92,84 @@ pub struct AccountDto {
     pub is_archived: bool,
 }
 
+/// Carries one account's Rust-derived current balance without changing its stored opening balance.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountBalanceDto {
+    /// Holds the stable account identifier.
+    pub account_id: String,
+    /// Holds the account name, including archived accounts needed for historical reconciliation.
+    pub account_name: String,
+    /// Holds the currency paired with the exact balance.
+    pub currency: String,
+    /// Stores opening balance plus every applicable immutable ledger fact.
+    pub balance_minor_units: String,
+    /// Marks whether the account is no longer available for new activity.
+    pub is_archived: bool,
+}
+
+/// Carries signed income and expense totals for one currency without mixing monetary units.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrencyTotalsDto {
+    /// Holds the currency shared by the two exact totals.
+    pub currency: String,
+    /// Holds net income, including applicable immutable corrections.
+    pub income_minor_units: String,
+    /// Holds net expense using the ledger's negative sign convention.
+    pub expense_minor_units: String,
+}
+
+/// Carries the protected, Rust-authoritative financial snapshot used by the workspace.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinanceSummaryDto {
+    /// Holds every profile-owned account balance, including archived accounts.
+    pub account_balances: Vec<AccountBalanceDto>,
+    /// Holds income and expense totals partitioned by currency.
+    pub currency_totals: Vec<CurrencyTotalsDto>,
+}
+
+/// Carries one category's planned, actual, and remaining budget amounts for an exact period.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetCategorySummaryDto {
+    /// Holds the category identifier used by the budget plan or ledger activity.
+    pub category_id: String,
+    /// Holds the category label even when it is archived.
+    pub category_name: String,
+    /// Identifies whether the category represents income or expense activity.
+    pub category_kind: String,
+    /// Holds the signed planned amount for the selected exact period.
+    pub planned_minor_units: String,
+    /// Holds the signed actual ledger amount for the selected period.
+    pub actual_minor_units: String,
+    /// Holds planned minus actual using the shared signed ledger convention.
+    pub remaining_minor_units: String,
+}
+
+/// Carries a selected budget's protected calculation results for one inclusive planning period.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetSummaryDto {
+    /// Holds the selected budget identifier.
+    pub budget_id: String,
+    /// Holds the budget's currency paired with every returned amount.
+    pub currency: String,
+    /// Holds the inclusive selected period start.
+    pub period_starts_on: String,
+    /// Holds the inclusive selected period end.
+    pub period_ends_on: String,
+    /// Holds the signed total of plans matching the selected exact period.
+    pub planned_minor_units: String,
+    /// Holds the signed total categorized activity for the selected period.
+    pub actual_minor_units: String,
+    /// Holds planned minus actual using the ledger's signed convention.
+    pub remaining_minor_units: String,
+    /// Holds deterministic category-level planning and activity results.
+    pub categories: Vec<BudgetCategorySummaryDto>,
+}
+
 /// Carries a normalized transaction representation without exposing persistence details.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -7,12 +7,15 @@ import type {
   BudgetAllocationDto,
   BudgetAllocationInput,
   BudgetDto,
+  BudgetSummaryDto,
+  BudgetSummaryInput,
   BudgetInput,
   BudgetUpdateInput,
   CategoryDto,
   CategoryInput,
   CategoryUpdateInput,
   CreateProfileInput,
+  FinanceSummaryDto,
   ProfileSummary,
   SessionStatus,
   TransactionDto,
@@ -122,6 +125,16 @@ export class FinanceCommandClient {
   /** Archives a protected account. */
   async archiveAccount(id: string): Promise<void> {
     await this.invokeCommand<void>("archive_account", { id });
+  }
+
+  /** Reads Rust-derived balances and totals without retaining a frontend calculation engine. */
+  async getFinanceSummary(): Promise<FinanceSummaryDto> {
+    return this.invokeCommand<FinanceSummaryDto>("get_finance_summary");
+  }
+
+  /** Reads Rust-derived results for one selected inclusive budget period. */
+  async getBudgetSummary(request: BudgetSummaryInput): Promise<BudgetSummaryDto> {
+    return this.invokeCommand<BudgetSummaryDto>("get_budget_summary", { request });
   }
 
   /** Records one protected income or expense entry in the active profile. */

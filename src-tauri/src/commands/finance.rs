@@ -2,12 +2,13 @@
 
 use crate::application::ApplicationError;
 use crate::application::contracts::{
-    AccountDto, BudgetAllocationDto, BudgetDto, CategoryDto, TransactionDto,
-    TransactionHistoryPageDto, TransferDto,
+    AccountDto, BudgetAllocationDto, BudgetDto, BudgetSummaryDto, CategoryDto, FinanceSummaryDto,
+    TransactionDto, TransactionHistoryPageDto, TransferDto,
 };
 use crate::application::use_cases::TransactionAllocationRequest;
 use crate::commands::safe_error;
 use crate::infrastructure::budget_allocation_repository::BudgetAllocationRepository;
+use crate::infrastructure::calculation_repository::CalculationRepository;
 use crate::infrastructure::finance_repository::FinanceRepository;
 use crate::infrastructure::transfer_repository::TransferRepository;
 use crate::security::LocalProfileService;
@@ -130,6 +131,46 @@ pub struct TransactionHistoryInput {
     pub search: Option<String>,
     pub page: u32,
     pub page_size: u32,
+}
+
+/// Accepts a selected budget and exact inclusive planning period for a protected calculation.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetSummaryInput {
+    pub budget_id: String,
+    pub period_starts_on: String,
+    pub period_ends_on: String,
+}
+
+/// Returns Rust-derived account balances and per-currency income and expense totals.
+#[tauri::command]
+pub fn get_finance_summary(
+    service: State<'_, LocalProfileService>,
+) -> Result<FinanceSummaryDto, ApplicationError> {
+    service
+        .with_active_profile(|scope, database| {
+            CalculationRepository::finance_summary(database, scope)
+        })
+        .map_err(safe_error)
+}
+
+/// Returns Rust-derived budget results for one selected exact planning period.
+#[tauri::command]
+pub fn get_budget_summary(
+    service: State<'_, LocalProfileService>,
+    request: BudgetSummaryInput,
+) -> Result<BudgetSummaryDto, ApplicationError> {
+    service
+        .with_active_profile(|scope, database| {
+            CalculationRepository::budget_summary(
+                database,
+                scope,
+                &request.budget_id,
+                &request.period_starts_on,
+                &request.period_ends_on,
+            )
+        })
+        .map_err(safe_error)
 }
 
 /// Lists protected budgets only after the active profile has authenticated.

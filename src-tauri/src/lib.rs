@@ -8,9 +8,10 @@ pub mod security;
 use crate::application::ApplicationError;
 use crate::commands::finance::{
     archive_account, archive_budget, archive_category, create_account, create_budget,
-    create_category, create_transaction, create_transfer, list_accounts, list_budget_allocations,
-    list_budgets, list_categories, list_transactions, remove_budget_allocation,
-    reverse_transaction, update_account, update_budget, update_category, upsert_budget_allocation,
+    create_category, create_transaction, create_transfer, get_budget_summary, get_finance_summary,
+    list_accounts, list_budget_allocations, list_budgets, list_categories, list_transactions,
+    remove_budget_allocation, reverse_transaction, update_account, update_budget, update_category,
+    upsert_budget_allocation,
 };
 use crate::commands::profile::{
     create_profile, get_session_status, list_profiles, lock_profile, record_session_activity,
@@ -42,6 +43,8 @@ pub fn run() {
             lock_profile,
             record_session_activity,
             switch_profile,
+            get_finance_summary,
+            get_budget_summary,
             list_budgets,
             create_budget,
             update_budget,
