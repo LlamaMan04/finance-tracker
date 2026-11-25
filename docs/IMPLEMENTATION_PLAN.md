@@ -40,6 +40,8 @@ src-tauri/src/
 
 ## Phase 1 — Foundations
 
+Status: `[x]` complete.
+
 ### Objective
 
 Establish a reproducible, cross-platform Tauri baseline and the backend boundaries that prevent finance logic and sensitive operations from leaking into the frontend.
@@ -73,6 +75,8 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 - [x] The chosen protection-at-rest approach has been proven in a small end-to-end spike before profile data is implemented.
 
 ## Phase 2 — Secure local profile
+
+Status: `[x]` complete.
 
 ### Objective
 
@@ -116,6 +120,8 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 
 ## Phase 3 — Core finance workflows
 
+Status: `[x]` complete.
+
 ### Objective
 
 Deliver the complete protected local ledger and budgeting workflow, including encrypted backup and restore, with Rust as the source of truth for all calculations and validation.
@@ -128,34 +134,24 @@ Deliver the complete protected local ledger and budgeting workflow, including en
 4. [x] Implement transfers as a linked, atomic operation affecting source and destination balances without appearing as income or expense in budget/report totals. Reject same-account, mismatched-currency, missing-account, and partial-write cases. The protected repository creates paired unclassified transfer facts and a transfer link in one SQLite transaction; the typed command and accessible workspace form are implemented, with rollback coverage for a forced destination-write failure.
 5. [x] Implement transaction history with profile-scoped filtering, date ranges, account/category/type filters, search, pagination, and deterministic ordering. Provide editing through explicit audit metadata and reversal/compensating entries where replacing history would be misleading. Protected history now uses database filters, bounded pages, stable newest-first ordering, and allocation hydration; reversal creates one atomic equal-and-opposite correction with an immutable audit link rather than changing the original transaction.
 6. [x] Implement balance, budget actual, remaining, income, and expense calculation services. Define a single sign convention and use it for account totals, lists, and future reports. Rust now returns account balances and currency-separated income/expense totals, plus exact-period budget category plan/actual/remaining results; focused protected-database tests cover opening balances, reversals/refunds, transfers, negative balances, leap days, and archived accounts.
-7. [~] Build the React workflows for budgets, categories, accounts, transaction entry/edit/reversal, transfers, and history. Add client-side ergonomics only; retain Rust validation as authoritative. Include confirmations for destructive or history-changing actions and accessible validation summaries. The authenticated workspace now supports budget, category, and account creation, listing, editing, and archive confirmation, accessible income/expense entry with optional accessible category splits and normalized-record confirmation, confirmed account transfers, plus filtered paginated transaction history and confirmed immutable reversals. The adjustment/edit React workflow is intentionally deferred to Phase 4; Phase 3 must complete its Rust contracts, repository behavior, commands, and tests without adding frontend UI.
-8. Implement encrypted backup export/import. A backup must be an authenticated encrypted package, contain format and compatibility versioning, and never be a plaintext CSV or JSON export. Require an unlocked session for export; on import, authenticate/decrypt, validate integrity and compatibility before mutation, display replace/merge warnings, create a recoverable pre-restore snapshot where feasible, and execute restoration transactionally.
-9. [~] Add repository integration tests using temporary protected databases, use-case tests, migration fixtures, and end-to-end tests for the primary workflows and backup tamper/failure cases. Temporary protected-database repository integration tests cover reference-data CRUD, archive behavior, validation, profile-scope isolation, income/expense sign and category validation, atomic category splits and rejected-split rollback, linked transfer validation and rollback, plus deterministic filtered history and immutable reversal behavior; backup coverage remains.
-
-### Phase 3 remaining work
-
-The remaining Phase 3 work is backend, persistence, security, and test work. Frontend workflow changes for transaction adjustment/edit are deliberately out of scope for this phase and should be planned with the Phase 4 reporting and drill-down UI work.
-
-1. [x] **Complete transaction adjustment/edit behavior in Rust.** The validated application request and command boundary create one atomic audit-preserving adjustment using `transaction_corrections.correction_kind = 'adjustment'`. The original transaction remains immutable; the correction records the exact amount/category delta, preserves account, budget, date, currency, and entry type, and keeps balances, budget actuals, and category allocations consistent. No React form or history action is added in Phase 3.
-2. [x] **Implement encrypted backup export.** Define the authenticated package format, format and compatibility versions, integrity metadata, and profile/session authorization. Export remains an AES-GCM-authenticated encrypted package stored under the application-owned profile backup directory; the command returns metadata only and does not expose plaintext CSV, JSON, database contents, keys, or sensitive paths.
-3. [x] **Implement encrypted backup restore.** The protected restore command accepts only an application-owned backup ID and an explicit policy. It authenticates and validates the package, profile binding, encryption metadata, and compatibility before opening a disposable encrypted-database candidate. `replace` creates an authenticated pre-restore snapshot and uses a staged swap with rollback; `merge` is explicitly rejected because a file-level SQLCipher snapshot cannot safely merge immutable records without a future conflict-aware logical package format. Malformed, tampered, wrong-key, incompatible, interrupted, and failed writes return redacted backup errors before active-data mutation. Portable external-file import is a Phase 4 workflow.
-4. [x] **Finish Phase 3 backend and migration coverage.** Add adjustment tests, backup round-trip tests, tamper/wrong-key/malformed/incompatible backup tests, restore-no-mutation-on-failure tests, migration fixtures for every released schema version, and representative seeded-database coverage. Add use-case and command authorization tests where the new backup and adjustment boundaries require them.
-5. [x] **Run the Phase 3 ledger gate.** Verify `npm run build`, `cargo check --manifest-path src-tauri/Cargo.toml`, and the focused Rust test suite; reconcile balances, budget totals, reversals, adjustments, transfers, archive behavior, profile isolation, and backup restore equivalence before marking Phase 3 complete.
+7. [x] Build the React workflows for budgets, categories, accounts, transaction entry/reversal, transfers, and history. Add client-side ergonomics only; retain Rust validation as authoritative. Include confirmations for destructive or history-changing actions and accessible validation summaries. The authenticated workspace supports budget, category, and account creation, listing, editing, and archive confirmation, accessible income/expense entry with optional accessible category splits and normalized-record confirmation, confirmed account transfers, plus filtered paginated transaction history and confirmed immutable reversals. The adjustment/edit React workflow is intentionally deferred to Phase 4; the Phase 3 Rust contracts, repository behavior, commands, and tests are complete.
+8. [x] Implement encrypted backup export/import. A backup is an authenticated encrypted package with format and compatibility versioning, never a plaintext CSV or JSON export. Export requires an unlocked session; restore authenticates and validates integrity and compatibility before mutation, creates a recoverable pre-restore snapshot, and executes replacement transactionally. Portable external-file import remains a Phase 4 workflow.
+9. [x] Add repository integration tests using temporary protected databases, use-case tests, migration fixtures, and end-to-end tests for the primary workflows and backup tamper/failure cases. Coverage includes reference-data CRUD, archive behavior, validation, profile-scope isolation, income/expense sign and category validation, atomic category splits and rejected-split rollback, linked transfer validation and rollback, deterministic filtered history, immutable reversals and adjustments, migration fixtures, encrypted backup round trips, and restore failure isolation.
 
 ### Deliverables
 
-- Complete protected CRUD workflows for the initial budget, category, account, transaction, and transfer model.
-- Single domain calculation source for balances and budget results.
-- Encrypted, authenticated, versioned backup export/import with restore safeguards.
-- Tests and migration fixtures covering normal, invalid, and upgrade paths.
+- [x] Complete protected CRUD workflows for the initial budget, category, account, transaction, and transfer model.
+- [x] Single domain calculation source for balances and budget results.
+- [x] Encrypted, authenticated, versioned backup export/import with restore safeguards.
+- [x] Tests and migration fixtures covering normal, invalid, and upgrade paths.
 
 ### Acceptance criteria
 
-- A user can create a budget, categories, and accounts; record income, expenses, and transfers; edit or reverse applicable transactions; and archive records while preserving historical results.
-- Account balances are reproducible from opening balance plus applicable transaction entries; transfers affect both accounts once and do not alter income/expense totals.
-- Budget actuals and remaining amounts use the same verified domain services that later reporting will call.
-- A backup round trip restores an equivalent protected dataset. Tampered, wrong-key, malformed, or incompatible backups fail before changing the active dataset.
-- Tests cover migration from every released schema version represented by fixtures.
+- [x] A user can create a budget, categories, and accounts; record income, expenses, and transfers; reverse applicable transactions; and archive records while preserving historical results. The protected adjustment/edit backend is complete for the Phase 4 UI workflow.
+- [x] Account balances are reproducible from opening balance plus applicable transaction entries; transfers affect both accounts once and do not alter income/expense totals.
+- [x] Budget actuals and remaining amounts use the same verified domain services that later reporting will call.
+- [x] A backup round trip restores an equivalent protected dataset. Tampered, wrong-key, malformed, or incompatible backups fail before changing the active dataset.
+- [x] Tests cover migration from every released schema version represented by fixtures.
 
 ## Phase 4 — Dashboard and visual reporting
 
