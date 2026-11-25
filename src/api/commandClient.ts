@@ -4,6 +4,7 @@ import type {
   AccountDto,
   AccountInput,
   AccountUpdateInput,
+  BackupDto,
   BudgetAllocationDto,
   BudgetAllocationInput,
   BudgetDto,
@@ -161,6 +162,11 @@ export class FinanceCommandClient {
   /** Records an immutable delta for an eligible ledger entry; no UI workflow invokes this in Phase 3. */
   async adjustTransaction(request: TransactionAdjustmentInput): Promise<TransactionDto> {
     return this.invokeCommand<TransactionDto>("adjust_transaction", { request });
+  }
+
+  /** Creates an encrypted backup for the active profile without exposing package bytes or paths. */
+  async exportBackup(): Promise<BackupDto> {
+    return this.invokeCommand<BackupDto>("export_backup");
   }
 
   /** Converts unknown Tauri failures into the reviewed frontend error shape. */

@@ -7,7 +7,7 @@ use crate::ports::security::DatabaseKey;
 use rusqlite::{Connection, OpenFlags, Transaction};
 use std::fs;
 use std::os::raw::c_int;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use zeroize::Zeroizing;
@@ -18,6 +18,7 @@ const SQLCIPHER_RAW_KEY_LENGTH: usize = 67;
 /// Owns the single synchronized SQLite connection used by the local application.
 pub struct Database {
     connection: Mutex<Connection>,
+    path: PathBuf,
 }
 
 impl Database {
@@ -31,7 +32,7 @@ impl Database {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
         let connection =
             Connection::open_with_flags(path, flags).map_err(|_| ApplicationError::internal())?;
-        Self::initialize(connection, key)
+        Self::initialize(connection, path.to_owned(), key)
     }
 
     /// Opens an existing protected database without creating a replacement during unlock.
@@ -43,17 +44,21 @@ impl Database {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE;
         let connection =
             Connection::open_with_flags(path, flags).map_err(|_| ApplicationError::internal())?;
-        Self::initialize(connection, key)
+        Self::initialize(connection, path.to_owned(), key)
     }
 
     /// Applies the key boundary before normal connection setup and migrations.
-    fn initialize(mut connection: Connection, key: &DatabaseKey) -> DatabaseResult<Self> {
+    fn initialize(
+        mut connection: Connection,
+        path: PathBuf,
+        key: &DatabaseKey,
+    ) -> DatabaseResult<Self> {
         apply_database_key(&connection, key)?;
         validate_database_key(&connection)?;
         configure_connection(&mut connection)?;
         migrations::run(&mut connection)?;
 
-        Ok(Self { connection: Mutex::new(connection) })
+        Ok(Self { connection: Mutex::new(connection), path })
     }
 
     /// Runs a repository operation atomically, committing only when the closure succeeds.
@@ -68,6 +73,27 @@ impl Database {
         transaction.commit().map_err(|_| ApplicationError::internal())?;
 
         Ok(result)
+    }
+
+    /// Flushes the WAL so a file-level encrypted snapshot contains the committed database state.
+    pub fn checkpoint_wal(&self) -> DatabaseResult<()> {
+        let connection = self.connection.lock().map_err(|_| ApplicationError::internal())?;
+        connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .map_err(|_| ApplicationError::internal())
+    }
+
+    /// Returns the current encrypted database bytes only to the backup adapter.
+    pub fn encrypted_file_bytes(&self) -> DatabaseResult<Vec<u8>> {
+        fs::read(&self.path).map_err(|_| ApplicationError::backup())
+    }
+
+    /// Returns the database timestamp used in the backup metadata envelope.
+    pub fn current_timestamp(&self) -> DatabaseResult<String> {
+        let connection = self.connection.lock().map_err(|_| ApplicationError::internal())?;
+        connection
+            .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| row.get(0))
+            .map_err(|_| ApplicationError::internal())
     }
 
     /// Executes a read-only query while keeping the connection and SQL implementation private.

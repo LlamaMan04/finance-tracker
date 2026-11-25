@@ -1,13 +1,18 @@
 //! Authenticated multi-profile lifecycle and in-memory session ownership.
 
 use crate::application::ApplicationError;
-use crate::application::contracts::{ProfileSummaryDto, SessionStatusDto};
-use crate::application::use_cases::{CreateProfileRequest, ProfileService, UnlockProfileRequest};
+use crate::application::contracts::{BackupDto, ProfileSummaryDto, SessionStatusDto};
+use crate::application::use_cases::{
+    BackupService, CreateProfileRequest, ProfileService, RestorePolicy, UnlockProfileRequest,
+};
 use crate::domain::{ProfileId, ProfileScope};
+use crate::infrastructure::backup;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::profile_metadata::{ProfileMetadataStore, StoredProfileMetadata};
 use crate::infrastructure::profile_registry::ProfileRegistry;
-use crate::ports::security::{CredentialStorePort, DatabaseKey, KeyDerivationPort};
+use crate::ports::security::{
+    CredentialStorePort, DatabaseKey, EncryptionMetadata, KeyDerivationPort,
+};
 use crate::security::credential_store::credential_reference;
 use crate::security::session_timeout::{DEFAULT_INACTIVITY_TIMEOUT, SessionTimeout};
 use crate::security::unlock_throttle::UnlockThrottle;
@@ -21,6 +26,8 @@ use std::time::{Duration, Instant};
 /// Owns all sensitive material and the protected connection for one unlocked session.
 struct UnlockedSession {
     profile_id: ProfileId,
+    /// Retains non-secret derivation metadata so portable backups carry their unlock contract.
+    encryption_metadata: EncryptionMetadata,
     _database_key: DatabaseKey,
     _database: Database,
 }
@@ -94,6 +101,21 @@ impl LocalProfileService {
         operation(&scope, &active_session._database)
     }
 
+    /// Creates an encrypted package only for the currently authenticated profile.
+    pub fn export_backup(&self) -> Result<BackupDto, ApplicationError> {
+        let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
+        self.expire_inactive_session_at(&mut state, Instant::now());
+        let active_session = state.active_session.as_ref().ok_or_else(ApplicationError::locked)?;
+        let scope = ProfileScope::new(active_session.profile_id.clone());
+        backup::export(
+            &active_session._database,
+            &active_session._database_key,
+            &scope,
+            &active_session.encryption_metadata,
+            &self.registry.backup_directory(&active_session.profile_id),
+        )
+    }
+
     /// Builds a safe response from selected and active session state.
     fn status(&self, state: &SessionState) -> SessionStatusDto {
         let profile_id = state
@@ -163,7 +185,12 @@ impl LocalProfileService {
         ensure_profile_scope(&database, &profile_id)?;
         self.refresh_credential_store(stored.credential_store_reference.as_deref(), &database_key);
 
-        Ok(UnlockedSession { profile_id, _database_key: database_key, _database: database })
+        Ok(UnlockedSession {
+            profile_id,
+            encryption_metadata: stored.encryption.clone(),
+            _database_key: database_key,
+            _database: database,
+        })
     }
 
     /// Best-effort credential storage never changes whether a passphrase-authorized session may open.
@@ -281,8 +308,12 @@ impl ProfileService for LocalProfileService {
             stored_metadata.credential_store_reference.as_deref(),
             &database_key,
         );
-        state.active_session =
-            Some(UnlockedSession { profile_id, _database_key: database_key, _database: database });
+        state.active_session = Some(UnlockedSession {
+            profile_id,
+            encryption_metadata: stored_metadata.encryption.clone(),
+            _database_key: database_key,
+            _database: database,
+        });
         state.last_activity_at = Some(Instant::now());
 
         Ok(self.status(&state))
@@ -361,6 +392,23 @@ impl ProfileService for LocalProfileService {
         state.selected_profile_id = Some(profile_id);
 
         Ok(self.status(&state))
+    }
+}
+
+impl BackupService for LocalProfileService {
+    /// Exports only through the active session and never exposes package bytes to the caller.
+    fn export(&self, _scope: &ProfileScope) -> Result<BackupDto, ApplicationError> {
+        self.export_backup()
+    }
+
+    /// Restore remains deliberately unavailable until the import slice defines its policy.
+    fn restore(
+        &self,
+        _scope: &ProfileScope,
+        _backup_id: &crate::domain::BackupId,
+        _policy: RestorePolicy,
+    ) -> Result<(), ApplicationError> {
+        Err(ApplicationError::backup())
     }
 }
 
@@ -565,6 +613,17 @@ mod tests {
             .with_active_profile(|_, _| Ok(()))
             .expect_err("explicit lock revokes protected access");
         assert_eq!(relocked_error.code, ErrorCode::Locked);
+    }
+
+    /// Proves backup export requires the same authenticated session boundary as finance queries.
+    #[test]
+    fn rejects_backup_export_while_locked() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let service = service_for(&directory);
+
+        let error = service.export_backup().expect_err("locked export is rejected");
+
+        assert_eq!(error.code, ErrorCode::Locked);
     }
 
     /// Proves an unavailable optional credential store never replaces the mandatory passphrase path.

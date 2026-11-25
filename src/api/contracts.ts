@@ -342,6 +342,16 @@ export interface TransactionAdjustmentInput {
   reason: string;
 }
 
+/** Describes an encrypted backup created inside the authenticated profile boundary. */
+export interface BackupDto {
+  /** Identifies the package without exposing its application-owned path. */
+  id: string;
+  /** Identifies the authenticated package envelope format. */
+  formatVersion: number;
+  /** Records the package creation timestamp. */
+  createdAt: string;
+}
+
 /** Carries one positive transfer amount between two active, same-currency accounts. */
 export interface TransferInput {
   /** Identifies the account from which the amount is debited. */

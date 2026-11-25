@@ -72,6 +72,11 @@ impl ProfileRegistry {
         self.profile_directory(profile_id).join("finance-tracker.sqlite3")
     }
 
+    /// Returns the application-owned directory for encrypted backup packages.
+    pub fn backup_directory(&self, profile_id: &ProfileId) -> PathBuf {
+        self.profile_directory(profile_id).join("backups")
+    }
+
     /// Loads the registry or supplies an empty first-run document.
     fn load(&self) -> Result<ProfileRegistryDocument, ApplicationError> {
         if !self.registry_path.exists() {

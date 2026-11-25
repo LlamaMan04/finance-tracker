@@ -1,5 +1,6 @@
 //! Concrete local adapters for persistence and other platform-facing infrastructure.
 
+pub mod backup;
 pub mod budget_allocation_repository;
 pub mod calculation_repository;
 pub mod database;
