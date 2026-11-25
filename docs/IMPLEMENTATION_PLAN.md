@@ -138,7 +138,7 @@ The remaining Phase 3 work is backend, persistence, security, and test work. Fro
 
 1. [x] **Complete transaction adjustment/edit behavior in Rust.** The validated application request and command boundary create one atomic audit-preserving adjustment using `transaction_corrections.correction_kind = 'adjustment'`. The original transaction remains immutable; the correction records the exact amount/category delta, preserves account, budget, date, currency, and entry type, and keeps balances, budget actuals, and category allocations consistent. No React form or history action is added in Phase 3.
 2. [x] **Implement encrypted backup export.** Define the authenticated package format, format and compatibility versions, integrity metadata, and profile/session authorization. Export remains an AES-GCM-authenticated encrypted package stored under the application-owned profile backup directory; the command returns metadata only and does not expose plaintext CSV, JSON, database contents, keys, or sensitive paths.
-3. [x] **Implement encrypted backup import/restore.** The protected restore command accepts only an application-owned backup ID and an explicit policy. It authenticates and validates the package, profile binding, encryption metadata, and compatibility before opening a disposable encrypted-database candidate. `replace` creates an authenticated pre-restore snapshot and uses a staged swap with rollback; `merge` is explicitly rejected because a file-level SQLCipher snapshot cannot safely merge immutable records without a future conflict-aware logical package format. Malformed, tampered, wrong-key, incompatible, interrupted, and failed writes return redacted backup errors before active-data mutation.
+3. [x] **Implement encrypted backup restore.** The protected restore command accepts only an application-owned backup ID and an explicit policy. It authenticates and validates the package, profile binding, encryption metadata, and compatibility before opening a disposable encrypted-database candidate. `replace` creates an authenticated pre-restore snapshot and uses a staged swap with rollback; `merge` is explicitly rejected because a file-level SQLCipher snapshot cannot safely merge immutable records without a future conflict-aware logical package format. Malformed, tampered, wrong-key, incompatible, interrupted, and failed writes return redacted backup errors before active-data mutation. Portable external-file import is a Phase 4 workflow.
 4. **Finish Phase 3 backend and migration coverage.** Add adjustment tests, backup round-trip tests, tamper/wrong-key/malformed/incompatible backup tests, restore-no-mutation-on-failure tests, migration fixtures for every released schema version, and representative seeded-database coverage. Add use-case and command authorization tests where the new backup and adjustment boundaries require them.
 5. **Run the Phase 3 ledger gate.** Verify `npm run build`, `cargo check --manifest-path src-tauri/Cargo.toml`, and the focused Rust test suite; reconcile balances, budget totals, reversals, adjustments, transfers, archive behavior, profile isolation, and backup restore equivalence before marking Phase 3 complete.
 
@@ -173,6 +173,7 @@ Make the existing finance data understandable through accessible, filterable sum
 6. Reconcile each component against reporting-service fixtures. Add snapshot/data tests for chart inputs and UI tests for filter changes, labels, keyboard operation, screen-reader descriptions, and high-contrast/color-independent interpretation.
 7. Manually verify layout behavior at supported desktop window sizes and on the platform WebViews selected in Phase 1.
 8. Complete the deferred transaction adjustment/edit React workflow against the Phase 3 Rust commands. Add accessible history actions, edit forms, validation summaries, confirmation for history-changing actions, and refresh/drill-down behavior without duplicating financial calculations in the UI.
+9. Add portable encrypted-backup import for a selected external `.ftbackup` package. Use a reviewed native file-selection flow, stage the chosen file only in an application-owned quarantine location, and then invoke the Phase 3 restore boundary by validated package ID rather than exposing arbitrary paths or package bytes to finance logic. Require an unlocked target profile, explicit replace confirmation and recovery-snapshot warning, accessible success/error states, and tests for copied backups, invalid selection, tampering, wrong-profile/wrong-key packages, cancellation, and cleanup of staged files.
 
 ### Deliverables
 
@@ -180,6 +181,7 @@ Make the existing finance data understandable through accessible, filterable sum
 - Accessible dashboard screens with visual and tabular equivalents.
 - Drill-down routes from summaries/charts into filtered history.
 - Test fixtures that reconcile cards, tables, and chart input data.
+- An accessible portable encrypted-backup import flow that reuses the protected restore boundary.
 
 ### Acceptance criteria
 
@@ -187,6 +189,7 @@ Make the existing finance data understandable through accessible, filterable sum
 - Every visual total matches the reporting service and can be traced to the underlying transactions.
 - A keyboard-only or screen-reader user can access the same financial meaning and drill-down paths as a chart user.
 - Empty, loading, error, and incomplete-data states are intentional and non-misleading.
+- A user can select an encrypted backup from another approved location and either restore it safely into the unlocked matching profile or receive a redacted, non-mutating failure.
 
 ## Phase 5 — Hardening and release readiness
 
