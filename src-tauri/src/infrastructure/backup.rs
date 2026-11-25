@@ -4,7 +4,7 @@ use crate::application::ApplicationError;
 use crate::application::contracts::BackupDto;
 use crate::domain::ProfileScope;
 use crate::infrastructure::database::Database;
-use crate::ports::security::{DatabaseKey, EncryptionMetadata};
+use crate::ports::security::{Argon2Parameters, DatabaseKey, EncryptionMetadata, KDF_SALT_LENGTH};
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use rand_core::{OsRng, RngCore};
@@ -61,6 +61,115 @@ pub fn export(
     Ok(BackupDto { id: backup_id, format_version: FORMAT_VERSION, created_at })
 }
 
+/// Decrypts one application-owned backup only after authenticating its complete envelope.
+///
+/// The caller owns the returned encrypted-database bytes and must validate them in a disposable
+/// database file before replacing any live profile data.
+pub fn decrypt_for_restore(
+    backup_directory: &Path,
+    backup_id: &str,
+    scope: &ProfileScope,
+    key: &DatabaseKey,
+    expected_encryption_metadata: &EncryptionMetadata,
+) -> Result<Vec<u8>, ApplicationError> {
+    let package_path = backup_directory.join(format!("{backup_id}.ftbackup"));
+    let package = fs::read(package_path).map_err(|_| ApplicationError::backup())?;
+    let (header, header_length) = decode_header(&package)?;
+    if header.profile_id != scope.profile_id().as_str()
+        || header.encryption_metadata != *expected_encryption_metadata
+    {
+        return Err(ApplicationError::backup());
+    }
+
+    let nonce_end = header_length.checked_add(NONCE_LENGTH).ok_or_else(ApplicationError::backup)?;
+    if package.len() < nonce_end + 16 {
+        return Err(ApplicationError::backup());
+    }
+    let cipher = Aes256Gcm::new_from_slice(key.expose()).map_err(|_| ApplicationError::backup())?;
+    cipher
+        .decrypt(
+            Nonce::from_slice(&package[header_length..nonce_end]),
+            Payload { msg: &package[nonce_end..], aad: &package[..header_length] },
+        )
+        .map_err(|_| ApplicationError::backup())
+}
+
+/// Holds authenticated envelope data needed to reject incompatible restore attempts.
+struct BackupHeader {
+    profile_id: String,
+    encryption_metadata: EncryptionMetadata,
+}
+
+/// Decodes only bounded, non-secret envelope metadata before AES-GCM authenticates it.
+fn decode_header(package: &[u8]) -> Result<(BackupHeader, usize), ApplicationError> {
+    let mut cursor = 0;
+    if read_exact(package, &mut cursor, MAGIC.len())? != MAGIC {
+        return Err(ApplicationError::backup());
+    }
+    if read_u32(package, &mut cursor)? != FORMAT_VERSION
+        || read_u32(package, &mut cursor)? != COMPATIBILITY_VERSION
+    {
+        return Err(ApplicationError::backup());
+    }
+    let profile_id = read_string(package, &mut cursor)?;
+    // The backup identifier and creation time are authenticated metadata, but are not needed to
+    // restore an application-owned package selected by its validated filename.
+    let _backup_id = read_string(package, &mut cursor)?;
+    let _created_at = read_string(package, &mut cursor)?;
+    let encryption_metadata = EncryptionMetadata {
+        format_version: read_u32(package, &mut cursor)?,
+        kdf_version: read_u32(package, &mut cursor)?,
+        encryption_version: read_u32(package, &mut cursor)?,
+        argon2: Argon2Parameters {
+            memory_kib: read_u32(package, &mut cursor)?,
+            time_cost: read_u32(package, &mut cursor)?,
+            parallelism: read_u32(package, &mut cursor)?,
+        },
+        salt: read_array(package, &mut cursor)?,
+    };
+
+    Ok((BackupHeader { profile_id, encryption_metadata }, cursor))
+}
+
+/// Reads an exact bounded slice without allowing malformed lengths to overflow indexing.
+fn read_exact<'a>(
+    package: &'a [u8],
+    cursor: &mut usize,
+    length: usize,
+) -> Result<&'a [u8], ApplicationError> {
+    let end = cursor.checked_add(length).ok_or_else(ApplicationError::backup)?;
+    let value = package.get(*cursor..end).ok_or_else(ApplicationError::backup)?;
+    *cursor = end;
+    Ok(value)
+}
+
+/// Reads one little-endian envelope integer.
+fn read_u32(package: &[u8], cursor: &mut usize) -> Result<u32, ApplicationError> {
+    let bytes: [u8; 4] =
+        read_exact(package, cursor, 4)?.try_into().map_err(|_| ApplicationError::backup())?;
+    Ok(u32::from_le_bytes(bytes))
+}
+
+/// Reads a short UTF-8 header string with an explicit application limit.
+fn read_string(package: &[u8], cursor: &mut usize) -> Result<String, ApplicationError> {
+    const MAX_HEADER_STRING_LENGTH: usize = 512;
+    let length =
+        usize::try_from(read_u32(package, cursor)?).map_err(|_| ApplicationError::backup())?;
+    if length > MAX_HEADER_STRING_LENGTH {
+        return Err(ApplicationError::backup());
+    }
+    let bytes = read_exact(package, cursor, length)?;
+    String::from_utf8(bytes.to_vec()).map_err(|_| ApplicationError::backup())
+}
+
+/// Reads the fixed-width KDF salt without accepting a truncated envelope.
+fn read_array(
+    package: &[u8],
+    cursor: &mut usize,
+) -> Result<[u8; KDF_SALT_LENGTH], ApplicationError> {
+    read_exact(package, cursor, KDF_SALT_LENGTH)?.try_into().map_err(|_| ApplicationError::backup())
+}
+
 /// Encodes the portable, authenticated metadata before the nonce and ciphertext.
 ///
 /// The KDF metadata is not secret, but it is necessary to derive the source key from a passphrase
@@ -103,8 +212,8 @@ fn append_encryption_metadata(buffer: &mut Vec<u8>, metadata: &EncryptionMetadat
 
 #[cfg(test)]
 mod tests {
-    use super::{COMPATIBILITY_VERSION, FORMAT_VERSION, MAGIC, export};
-    use crate::application::ApplicationError;
+    use super::{COMPATIBILITY_VERSION, FORMAT_VERSION, MAGIC, decrypt_for_restore, export};
+    use crate::application::{ApplicationError, ErrorCode};
     use crate::domain::{ProfileId, ProfileScope};
     use crate::infrastructure::database::Database;
     use crate::infrastructure::test_support::TemporaryDatabase;
@@ -222,5 +331,43 @@ mod tests {
 
         assert_ne!(first.id, second.id);
         assert_eq!(fs::read_dir(backup_directory.path()).unwrap().count(), 2);
+    }
+
+    /// Proves restore decryption returns exactly the protected database snapshot after validation.
+    #[test]
+    fn decrypts_only_an_authenticated_profile_bound_package() {
+        let (database_fixture, database, key, metadata) = fixture();
+        database
+            .in_transaction(|transaction| {
+                transaction
+                    .execute(
+                        "INSERT INTO application_metadata (key, value) VALUES (?1, ?2)",
+                        ("restore-check", "expected value"),
+                    )
+                    .map_err(|_| ApplicationError::internal())?;
+                Ok(())
+            })
+            .expect("fixture data writes");
+        let backup_directory = tempfile::tempdir().expect("backup directory creates");
+        let scope = ProfileScope::new(ProfileId::parse("profile-a").unwrap());
+        let exported = export(&database, &key, &scope, &metadata, backup_directory.path())
+            .expect("backup exports");
+
+        let restored =
+            decrypt_for_restore(backup_directory.path(), &exported.id, &scope, &key, &metadata)
+                .expect("authenticated package decrypts");
+        assert_eq!(restored, fs::read(database_fixture.path()).expect("database reads"));
+
+        let path = backup_directory.path().join(format!("{}.ftbackup", exported.id));
+        let mut tampered = fs::read(&path).expect("package reads");
+        let last_byte = tampered.len() - 1;
+        tampered[last_byte] ^= 1;
+        fs::write(&path, tampered).expect("tampered package writes");
+        assert_eq!(
+            decrypt_for_restore(backup_directory.path(), &exported.id, &scope, &key, &metadata)
+                .expect_err("tampered package is rejected")
+                .code,
+            ErrorCode::Backup
+        );
     }
 }

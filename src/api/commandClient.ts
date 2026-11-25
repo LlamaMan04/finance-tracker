@@ -23,6 +23,7 @@ import type {
   TransactionAdjustmentInput,
   TransactionHistoryInput,
   TransactionHistoryPageDto,
+  RestoreBackupInput,
   TransferDto,
   TransferInput,
   TransactionInput,
@@ -167,6 +168,11 @@ export class FinanceCommandClient {
   /** Creates an encrypted backup for the active profile without exposing package bytes or paths. */
   async exportBackup(): Promise<BackupDto> {
     return this.invokeCommand<BackupDto>("export_backup");
+  }
+
+  /** Restores an application-owned encrypted package after an explicit policy selection. */
+  async restoreBackup(request: RestoreBackupInput): Promise<void> {
+    return this.invokeCommand<void>("restore_backup", { request });
   }
 
   /** Converts unknown Tauri failures into the reviewed frontend error shape. */

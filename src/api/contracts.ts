@@ -352,6 +352,12 @@ export interface BackupDto {
   createdAt: string;
 }
 
+/** Selects the reviewed restore behavior for an encrypted application-owned package. */
+export interface RestoreBackupInput {
+  backupId: string;
+  policy: "replace" | "merge";
+}
+
 /** Carries one positive transfer amount between two active, same-currency accounts. */
 export interface TransferInput {
   /** Identifies the account from which the amount is debited. */

@@ -5,7 +5,7 @@ use crate::application::contracts::{BackupDto, ProfileSummaryDto, SessionStatusD
 use crate::application::use_cases::{
     BackupService, CreateProfileRequest, ProfileService, RestorePolicy, UnlockProfileRequest,
 };
-use crate::domain::{ProfileId, ProfileScope};
+use crate::domain::{BackupId, ProfileId, ProfileScope};
 use crate::infrastructure::backup;
 use crate::infrastructure::database::Database;
 use crate::infrastructure::profile_metadata::{ProfileMetadataStore, StoredProfileMetadata};
@@ -114,6 +114,87 @@ impl LocalProfileService {
             &active_session.encryption_metadata,
             &self.registry.backup_directory(&active_session.profile_id),
         )
+    }
+
+    /// Restores one authenticated application-owned package after validating it off-line first.
+    pub fn restore_backup(
+        &self,
+        backup_id: BackupId,
+        policy: RestorePolicy,
+    ) -> Result<(), ApplicationError> {
+        let mut state = self.session.lock().map_err(|_| ApplicationError::internal())?;
+        self.expire_inactive_session_at(&mut state, Instant::now());
+        let active_session = state.active_session.as_ref().ok_or_else(ApplicationError::locked)?;
+        if policy == RestorePolicy::Merge {
+            // A file-level SQLCipher snapshot cannot safely merge immutable ledger records without
+            // a separate conflict-aware logical package format. Reject rather than silently lose data.
+            return Err(ApplicationError::conflict());
+        }
+        let scope = ProfileScope::new(active_session.profile_id.clone());
+        let database_path = self.registry.database_path(&active_session.profile_id);
+        let backup_directory = self.registry.backup_directory(&active_session.profile_id);
+        let restored_bytes = backup::decrypt_for_restore(
+            &backup_directory,
+            backup_id.as_str(),
+            &scope,
+            &active_session._database_key,
+            &active_session.encryption_metadata,
+        )?;
+
+        let staging_path = restore_staging_path(&database_path, "staging");
+        write_restore_staging_file(&staging_path, &restored_bytes)?;
+        // Opening the disposable copy proves SQLCipher authentication, schema compatibility, and
+        // migrations before the active database is moved or overwritten.
+        let staged_database = Database::open(&staging_path, &active_session._database_key)
+            .map_err(|_| ApplicationError::backup())?;
+        staged_database.checkpoint_wal().map_err(|_| ApplicationError::backup())?;
+        drop(staged_database);
+
+        // Take an authenticated recovery snapshot only after the requested backup is fully valid.
+        backup::export(
+            &active_session._database,
+            &active_session._database_key,
+            &scope,
+            &active_session.encryption_metadata,
+            &backup_directory,
+        )?;
+
+        let previous_session = state.active_session.take().ok_or_else(ApplicationError::locked)?;
+        let UnlockedSession { profile_id, encryption_metadata, _database_key, _database } =
+            previous_session;
+        drop(_database);
+        remove_database_sidecars(&database_path)?;
+        remove_database_sidecars(&staging_path)?;
+        let rollback_path = restore_staging_path(&database_path, "pre-restore");
+        fs::rename(&database_path, &rollback_path).map_err(|_| ApplicationError::backup())?;
+        if fs::rename(&staging_path, &database_path).is_err() {
+            let _rollback = fs::rename(&rollback_path, &database_path);
+            return Err(ApplicationError::backup());
+        }
+
+        let restored_database = match Database::open(&database_path, &_database_key) {
+            Ok(database) => database,
+            Err(_) => {
+                let _ignored_current = fs::remove_file(&database_path);
+                let _rollback = fs::rename(&rollback_path, &database_path);
+                return Err(ApplicationError::backup());
+            }
+        };
+        if fs::remove_file(&rollback_path).is_err() {
+            drop(restored_database);
+            let _ignored_current = fs::remove_file(&database_path);
+            let _rollback = fs::rename(&rollback_path, &database_path);
+            return Err(ApplicationError::backup());
+        }
+        state.active_session = Some(UnlockedSession {
+            profile_id,
+            encryption_metadata,
+            _database_key,
+            _database: restored_database,
+        });
+        state.last_activity_at = Some(Instant::now());
+
+        Ok(())
     }
 
     /// Builds a safe response from selected and active session state.
@@ -234,6 +315,36 @@ fn remove_file_if_present(path: &PathBuf) -> Result<(), ApplicationError> {
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
         Err(_) => Err(ApplicationError::internal()),
     }
+}
+
+/// Creates one sibling path so a restore never accepts a caller-controlled filesystem location.
+fn restore_staging_path(database_path: &PathBuf, suffix: &str) -> PathBuf {
+    let file_name = database_path.file_name().and_then(|name| name.to_str()).unwrap_or("database");
+    database_path.with_file_name(format!(".{file_name}.{suffix}.{}", uuid::Uuid::new_v4()))
+}
+
+/// Writes a complete candidate database and synchronizes it before it is opened for validation.
+fn write_restore_staging_file(path: &PathBuf, bytes: &[u8]) -> Result<(), ApplicationError> {
+    use std::io::Write;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|_| ApplicationError::backup())?;
+    file.write_all(bytes).map_err(|_| ApplicationError::backup())?;
+    file.sync_all().map_err(|_| ApplicationError::backup())
+}
+
+/// Removes only known SQLite sidecars after their owning connection has been closed.
+fn remove_database_sidecars(database_path: &PathBuf) -> Result<(), ApplicationError> {
+    for suffix in ["-wal", "-shm"] {
+        let mut sidecar_path = database_path.as_os_str().to_owned();
+        sidecar_path.push(suffix);
+        remove_file_if_present(&PathBuf::from(sidecar_path))
+            .map_err(|_| ApplicationError::backup())?;
+    }
+    Ok(())
 }
 
 impl ProfileService for LocalProfileService {
@@ -401,14 +512,20 @@ impl BackupService for LocalProfileService {
         self.export_backup()
     }
 
-    /// Restore remains deliberately unavailable until the import slice defines its policy.
+    /// Restores through the active session so package decryption never occurs while locked.
     fn restore(
         &self,
-        _scope: &ProfileScope,
-        _backup_id: &crate::domain::BackupId,
-        _policy: RestorePolicy,
+        scope: &ProfileScope,
+        backup_id: &crate::domain::BackupId,
+        policy: RestorePolicy,
     ) -> Result<(), ApplicationError> {
-        Err(ApplicationError::backup())
+        self.with_active_profile(|active_scope, _| {
+            if active_scope != scope {
+                return Err(ApplicationError::unauthorized());
+            }
+            Ok(())
+        })?;
+        self.restore_backup(backup_id.clone(), policy)
     }
 }
 
@@ -416,9 +533,10 @@ impl BackupService for LocalProfileService {
 mod tests {
     use super::LocalProfileService;
     use crate::application::use_cases::{
-        CreateProfileRequest, ProfileService, UnlockProfileRequest,
+        CreateProfileRequest, ProfileService, RestorePolicy, UnlockProfileRequest,
     };
     use crate::application::{ApplicationError, ErrorCode};
+    use crate::domain::BackupId;
     use crate::ports::database::DatabasePort;
     use crate::ports::security::{CredentialStorePort, DATABASE_KEY_LENGTH, DatabaseKey};
     use std::collections::HashMap;
@@ -624,6 +742,143 @@ mod tests {
         let error = service.export_backup().expect_err("locked export is rejected");
 
         assert_eq!(error.code, ErrorCode::Locked);
+    }
+
+    /// Proves a replace restore returns the active profile to the exported protected snapshot.
+    #[test]
+    fn restores_a_validated_backup_without_exposing_database_contents() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let service = service_for(&directory);
+        service
+            .create_profile(create_request("home", b"home passphrase"))
+            .expect("profile is created");
+        service
+            .with_active_profile(|_, database| {
+                database.in_transaction(|transaction| {
+                    transaction
+                        .execute(
+                            "INSERT INTO application_metadata (key, value) VALUES ('restore-probe', 'before')",
+                            [],
+                        )
+                        .map_err(|_| ApplicationError::internal())?;
+                    Ok(())
+                })
+            })
+            .expect("pre-backup data writes");
+        let exported = service.export_backup().expect("backup exports");
+        service
+            .with_active_profile(|_, database| {
+                database.in_transaction(|transaction| {
+                    transaction
+                        .execute(
+                            "UPDATE application_metadata SET value = 'after' WHERE key = 'restore-probe'",
+                            [],
+                        )
+                        .map_err(|_| ApplicationError::internal())?;
+                    Ok(())
+                })
+            })
+            .expect("post-backup data writes");
+
+        service
+            .restore_backup(
+                BackupId::parse(&exported.id).expect("export ID is valid"),
+                RestorePolicy::Replace,
+            )
+            .expect("backup restores");
+        let restored_value = service
+            .with_active_profile(|_, database| {
+                database.in_transaction(|transaction| {
+                    transaction
+                        .query_row(
+                            "SELECT value FROM application_metadata WHERE key = 'restore-probe'",
+                            [],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .map_err(|_| ApplicationError::internal())
+                })
+            })
+            .expect("restored protected data reads");
+        assert_eq!(restored_value, "before");
+    }
+
+    /// Proves authentication failure occurs before a replace restore can change active data.
+    #[test]
+    fn rejects_a_tampered_restore_without_mutating_the_active_database() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let service = service_for(&directory);
+        service
+            .create_profile(create_request("home", b"home passphrase"))
+            .expect("profile is created");
+        service
+            .with_active_profile(|_, database| {
+                database.in_transaction(|transaction| {
+                    transaction
+                        .execute(
+                            "INSERT INTO application_metadata (key, value) VALUES ('tamper-probe', 'active')",
+                            [],
+                        )
+                        .map_err(|_| ApplicationError::internal())?;
+                    Ok(())
+                })
+            })
+            .expect("active data writes");
+        let exported = service.export_backup().expect("backup exports");
+        let package_path = directory
+            .path()
+            .join("profile-store")
+            .join("profiles")
+            .join("home")
+            .join("backups")
+            .join(format!("{}.ftbackup", exported.id));
+        let mut package = fs::read(&package_path).expect("package reads");
+        let last_byte = package.len() - 1;
+        package[last_byte] ^= 1;
+        fs::write(package_path, package).expect("tampered package writes");
+
+        assert_eq!(
+            service
+                .restore_backup(
+                    BackupId::parse(&exported.id).expect("export ID is valid"),
+                    RestorePolicy::Replace,
+                )
+                .expect_err("tampered package is rejected")
+                .code,
+            ErrorCode::Backup
+        );
+        let active_value = service
+            .with_active_profile(|_, database| {
+                database.in_transaction(|transaction| {
+                    transaction
+                        .query_row(
+                            "SELECT value FROM application_metadata WHERE key = 'tamper-probe'",
+                            [],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .map_err(|_| ApplicationError::internal())
+                })
+            })
+            .expect("active protected data remains available");
+        assert_eq!(active_value, "active");
+    }
+
+    /// Proves the unsupported merge selection fails without mutating the active protected data.
+    #[test]
+    fn rejects_merge_restore_policy_without_touching_the_active_database() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let service = service_for(&directory);
+        service
+            .create_profile(create_request("home", b"home passphrase"))
+            .expect("profile is created");
+        let error = service
+            .restore_backup(
+                BackupId::parse("backup-01").expect("fixture ID is valid"),
+                RestorePolicy::Merge,
+            )
+            .expect_err("merge is not silently approximated");
+
+        assert_eq!(error.code, ErrorCode::Conflict);
+        assert!(!service.session_status().expect("session is readable").is_locked);
     }
 
     /// Proves an unavailable optional credential store never replaces the mandatory passphrase path.

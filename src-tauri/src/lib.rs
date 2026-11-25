@@ -6,7 +6,7 @@ pub mod ports;
 pub mod security;
 
 use crate::application::ApplicationError;
-use crate::commands::backup::export_backup;
+use crate::commands::backup::{export_backup, restore_backup};
 use crate::commands::finance::{
     adjust_transaction, archive_account, archive_budget, archive_category, create_account,
     create_budget, create_category, create_transaction, create_transfer, get_budget_summary,
@@ -66,7 +66,8 @@ pub fn run() {
             list_transactions,
             reverse_transaction,
             adjust_transaction,
-            export_backup
+            export_backup,
+            restore_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
