@@ -40,6 +40,8 @@ src-tauri/src/
 
 ## Phase 1 — Foundations
 
+Status: `[x]` complete.
+
 ### Objective
 
 Establish a reproducible, cross-platform Tauri baseline and the backend boundaries that prevent finance logic and sensitive operations from leaking into the frontend.
@@ -73,6 +75,8 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 - [x] The chosen protection-at-rest approach has been proven in a small end-to-end spike before profile data is implemented.
 
 ## Phase 2 — Secure local profile
+
+Status: `[x]` complete.
 
 ### Objective
 
@@ -116,36 +120,38 @@ Status: `[x]` complete, `[~]` partial, `[ ]` not started.
 
 ## Phase 3 — Core finance workflows
 
+Status: `[x]` complete.
+
 ### Objective
 
 Deliver the complete protected local ledger and budgeting workflow, including encrypted backup and restore, with Rust as the source of truth for all calculations and validation.
 
 ### Work breakdown
 
-1. Finalize migrations for budgets, categories, accounts, transactions, transfer linkage, transaction allocations, audit/correction metadata, and budget allocations. Include foreign keys, profile scoping, indexes for common history filters, archive flags, timestamps, and schema compatibility metadata.
-2. Implement application services and commands for budget creation, selection, editing, and archival; category create/rename/reorder/color/archive; account create/edit/archive; and period/category allocations. Enforce currency and ownership/profile validation in each use case.
-3. Implement transaction entry for income and expenses. Validate date, account, category applicability, amount sign/type rules, currency, payee/description limits, notes, and future allocation totals. Return normalized display DTOs rather than raw persistence records.
-4. Implement transfers as a linked, atomic operation affecting source and destination balances without appearing as income or expense in budget/report totals. Reject same-account, mismatched-currency, missing-account, and partial-write cases.
-5. Implement transaction history with profile-scoped filtering, date ranges, account/category/type filters, search, pagination, and deterministic ordering. Provide editing through explicit audit metadata and reversal/compensating entries where replacing history would be misleading.
-6. Implement balance, budget actual, remaining, income, and expense calculation services. Define a single sign convention and use it for account totals, lists, and future reports. Cover opening balances, refunds, zero entries where permitted, negative balances, leap days, and archived records.
-7. Build the React workflows for budgets, categories, accounts, transaction entry/edit/reversal, transfers, and history. Add client-side ergonomics only; retain Rust validation as authoritative. Include confirmations for destructive or history-changing actions and accessible validation summaries.
-8. Implement encrypted backup export/import. A backup must be an authenticated encrypted package, contain format and compatibility versioning, and never be a plaintext CSV or JSON export. Require an unlocked session for export; on import, authenticate/decrypt, validate integrity and compatibility before mutation, display replace/merge warnings, create a recoverable pre-restore snapshot where feasible, and execute restoration transactionally.
-9. Add repository integration tests using temporary protected databases, use-case tests, migration fixtures, and end-to-end tests for the primary workflows and backup tamper/failure cases.
+1. [x] Finalize migrations for budgets, categories, accounts, transactions, transfer linkage, transaction allocations, audit/correction metadata, and budget allocations. Include foreign keys, profile scoping, indexes for common history filters, archive flags, timestamps, and schema compatibility metadata.
+2. [x] Implement application services and commands for budget creation, selection, editing, and archival; category create/rename/reorder/color/archive; account create/edit/archive; and period/category allocations. Protected profile-scoped budget, category, and account create/list/edit/archive commands, repository integration tests, Rust validation, and budget/category period-allocation create/list/replace/remove workflows are implemented.
+3. [x] Implement transaction entry for income and expenses. Validate date, account, category applicability, amount sign/type rules, currency, payee/description limits, notes, and future allocation totals. Return normalized display DTOs rather than raw persistence records. Protected profile-scoped income/expense entry validates active references, type/sign conventions, currencies, leap-safe dates, text limits, and atomic category splits whose signed totals exactly match the transaction.
+4. [x] Implement transfers as a linked, atomic operation affecting source and destination balances without appearing as income or expense in budget/report totals. Reject same-account, mismatched-currency, missing-account, and partial-write cases. The protected repository creates paired unclassified transfer facts and a transfer link in one SQLite transaction; the typed command and accessible workspace form are implemented, with rollback coverage for a forced destination-write failure.
+5. [x] Implement transaction history with profile-scoped filtering, date ranges, account/category/type filters, search, pagination, and deterministic ordering. Provide editing through explicit audit metadata and reversal/compensating entries where replacing history would be misleading. Protected history now uses database filters, bounded pages, stable newest-first ordering, and allocation hydration; reversal creates one atomic equal-and-opposite correction with an immutable audit link rather than changing the original transaction.
+6. [x] Implement balance, budget actual, remaining, income, and expense calculation services. Define a single sign convention and use it for account totals, lists, and future reports. Rust now returns account balances and currency-separated income/expense totals, plus exact-period budget category plan/actual/remaining results; focused protected-database tests cover opening balances, reversals/refunds, transfers, negative balances, leap days, and archived accounts.
+7. [x] Build the React workflows for budgets, categories, accounts, transaction entry/reversal, transfers, and history. Add client-side ergonomics only; retain Rust validation as authoritative. Include confirmations for destructive or history-changing actions and accessible validation summaries. The authenticated workspace supports budget, category, and account creation, listing, editing, and archive confirmation, accessible income/expense entry with optional accessible category splits and normalized-record confirmation, confirmed account transfers, plus filtered paginated transaction history and confirmed immutable reversals. The adjustment/edit React workflow is intentionally deferred to Phase 4; the Phase 3 Rust contracts, repository behavior, commands, and tests are complete.
+8. [x] Implement encrypted backup export/import. A backup is an authenticated encrypted package with format and compatibility versioning, never a plaintext CSV or JSON export. Export requires an unlocked session; restore authenticates and validates integrity and compatibility before mutation, creates a recoverable pre-restore snapshot, and executes replacement transactionally. Portable external-file import remains a Phase 4 workflow.
+9. [x] Add repository integration tests using temporary protected databases, use-case tests, migration fixtures, and end-to-end tests for the primary workflows and backup tamper/failure cases. Coverage includes reference-data CRUD, archive behavior, validation, profile-scope isolation, income/expense sign and category validation, atomic category splits and rejected-split rollback, linked transfer validation and rollback, deterministic filtered history, immutable reversals and adjustments, migration fixtures, encrypted backup round trips, and restore failure isolation.
 
 ### Deliverables
 
-- Complete protected CRUD workflows for the initial budget, category, account, transaction, and transfer model.
-- Single domain calculation source for balances and budget results.
-- Encrypted, authenticated, versioned backup export/import with restore safeguards.
-- Tests and migration fixtures covering normal, invalid, and upgrade paths.
+- [x] Complete protected CRUD workflows for the initial budget, category, account, transaction, and transfer model.
+- [x] Single domain calculation source for balances and budget results.
+- [x] Encrypted, authenticated, versioned backup export/import with restore safeguards.
+- [x] Tests and migration fixtures covering normal, invalid, and upgrade paths.
 
 ### Acceptance criteria
 
-- A user can create a budget, categories, and accounts; record income, expenses, and transfers; edit or reverse applicable transactions; and archive records while preserving historical results.
-- Account balances are reproducible from opening balance plus applicable transaction entries; transfers affect both accounts once and do not alter income/expense totals.
-- Budget actuals and remaining amounts use the same verified domain services that later reporting will call.
-- A backup round trip restores an equivalent protected dataset. Tampered, wrong-key, malformed, or incompatible backups fail before changing the active dataset.
-- Tests cover migration from every released schema version represented by fixtures.
+- [x] A user can create a budget, categories, and accounts; record income, expenses, and transfers; reverse applicable transactions; and archive records while preserving historical results. The protected adjustment/edit backend is complete for the Phase 4 UI workflow.
+- [x] Account balances are reproducible from opening balance plus applicable transaction entries; transfers affect both accounts once and do not alter income/expense totals.
+- [x] Budget actuals and remaining amounts use the same verified domain services that later reporting will call.
+- [x] A backup round trip restores an equivalent protected dataset. Tampered, wrong-key, malformed, or incompatible backups fail before changing the active dataset.
+- [x] Tests cover migration from every released schema version represented by fixtures.
 
 ## Phase 4 — Dashboard and visual reporting
 
@@ -162,6 +168,8 @@ Make the existing finance data understandable through accessible, filterable sum
 5. Supply table/list equivalents for every chart with amounts, percentages, periods, and keyboard-accessible drill-down controls. Add meaningful empty, loading, error, and incomplete-data states.
 6. Reconcile each component against reporting-service fixtures. Add snapshot/data tests for chart inputs and UI tests for filter changes, labels, keyboard operation, screen-reader descriptions, and high-contrast/color-independent interpretation.
 7. Manually verify layout behavior at supported desktop window sizes and on the platform WebViews selected in Phase 1.
+8. Complete the deferred transaction adjustment/edit React workflow against the Phase 3 Rust commands. Add accessible history actions, edit forms, validation summaries, confirmation for history-changing actions, and refresh/drill-down behavior without duplicating financial calculations in the UI.
+9. Add portable encrypted-backup import for a selected external `.ftbackup` package. Use a reviewed native file-selection flow, stage the chosen file only in an application-owned quarantine location, and then invoke the Phase 3 restore boundary by validated package ID rather than exposing arbitrary paths or package bytes to finance logic. Require an unlocked target profile, explicit replace confirmation and recovery-snapshot warning, accessible success/error states, and tests for copied backups, invalid selection, tampering, wrong-profile/wrong-key packages, cancellation, and cleanup of staged files.
 
 ### Deliverables
 
@@ -169,6 +177,7 @@ Make the existing finance data understandable through accessible, filterable sum
 - Accessible dashboard screens with visual and tabular equivalents.
 - Drill-down routes from summaries/charts into filtered history.
 - Test fixtures that reconcile cards, tables, and chart input data.
+- An accessible portable encrypted-backup import flow that reuses the protected restore boundary.
 
 ### Acceptance criteria
 
@@ -176,6 +185,7 @@ Make the existing finance data understandable through accessible, filterable sum
 - Every visual total matches the reporting service and can be traced to the underlying transactions.
 - A keyboard-only or screen-reader user can access the same financial meaning and drill-down paths as a chart user.
 - Empty, loading, error, and incomplete-data states are intentional and non-misleading.
+- A user can select an encrypted backup from another approved location and either restore it safely into the unlocked matching profile or receive a redacted, non-mutating failure.
 
 ## Phase 5 — Hardening and release readiness
 

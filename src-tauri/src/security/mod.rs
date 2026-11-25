@@ -3,6 +3,8 @@
 mod credential_store;
 mod key_derivation;
 mod profile_service;
+#[cfg(test)]
+mod profile_service_tests;
 mod session_timeout;
 mod unlock_throttle;
 

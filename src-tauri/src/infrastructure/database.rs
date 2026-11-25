@@ -7,7 +7,7 @@ use crate::ports::security::DatabaseKey;
 use rusqlite::{Connection, OpenFlags, Transaction};
 use std::fs;
 use std::os::raw::c_int;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use zeroize::Zeroizing;
@@ -18,6 +18,7 @@ const SQLCIPHER_RAW_KEY_LENGTH: usize = 67;
 /// Owns the single synchronized SQLite connection used by the local application.
 pub struct Database {
     connection: Mutex<Connection>,
+    path: PathBuf,
 }
 
 impl Database {
@@ -31,7 +32,7 @@ impl Database {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
         let connection =
             Connection::open_with_flags(path, flags).map_err(|_| ApplicationError::internal())?;
-        Self::initialize(connection, key)
+        Self::initialize(connection, path.to_owned(), key)
     }
 
     /// Opens an existing protected database without creating a replacement during unlock.
@@ -43,17 +44,21 @@ impl Database {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE;
         let connection =
             Connection::open_with_flags(path, flags).map_err(|_| ApplicationError::internal())?;
-        Self::initialize(connection, key)
+        Self::initialize(connection, path.to_owned(), key)
     }
 
     /// Applies the key boundary before normal connection setup and migrations.
-    fn initialize(mut connection: Connection, key: &DatabaseKey) -> DatabaseResult<Self> {
+    fn initialize(
+        mut connection: Connection,
+        path: PathBuf,
+        key: &DatabaseKey,
+    ) -> DatabaseResult<Self> {
         apply_database_key(&connection, key)?;
         validate_database_key(&connection)?;
         configure_connection(&mut connection)?;
         migrations::run(&mut connection)?;
 
-        Ok(Self { connection: Mutex::new(connection) })
+        Ok(Self { connection: Mutex::new(connection), path })
     }
 
     /// Runs a repository operation atomically, committing only when the closure succeeds.
@@ -68,6 +73,27 @@ impl Database {
         transaction.commit().map_err(|_| ApplicationError::internal())?;
 
         Ok(result)
+    }
+
+    /// Flushes the WAL so a file-level encrypted snapshot contains the committed database state.
+    pub fn checkpoint_wal(&self) -> DatabaseResult<()> {
+        let connection = self.connection.lock().map_err(|_| ApplicationError::internal())?;
+        connection
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .map_err(|_| ApplicationError::internal())
+    }
+
+    /// Returns the current encrypted database bytes only to the backup adapter.
+    pub fn encrypted_file_bytes(&self) -> DatabaseResult<Vec<u8>> {
+        fs::read(&self.path).map_err(|_| ApplicationError::backup())
+    }
+
+    /// Returns the database timestamp used in the backup metadata envelope.
+    pub fn current_timestamp(&self) -> DatabaseResult<String> {
+        let connection = self.connection.lock().map_err(|_| ApplicationError::internal())?;
+        connection
+            .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", [], |row| row.get(0))
+            .map_err(|_| ApplicationError::internal())
     }
 
     /// Executes a read-only query while keeping the connection and SQL implementation private.
@@ -193,14 +219,14 @@ mod tests {
         deriver.derive_database_key(b"test-only passphrase", &metadata).expect("test key derives")
     }
 
-    /// Proves a fresh file receives the embedded bootstrap schema and migration record.
+    /// Proves a fresh file receives the complete embedded schema and migration records.
     #[test]
     fn creates_and_migrates_a_fresh_database() {
         let fixture = TemporaryDatabase::new();
         let key = test_key();
         let database = Database::create(fixture.path(), &key).expect("database initializes");
 
-        assert_eq!(database.schema_version().expect("schema version is readable"), 1);
+        assert_eq!(database.schema_version().expect("schema version is readable"), 3);
         database.with_connection(|connection| {
             let metadata_table_count: u32 = connection
                 .query_row(
@@ -210,6 +236,24 @@ mod tests {
                 )
                 .expect("SQLite metadata query succeeds");
             assert_eq!(metadata_table_count, 1);
+
+            let finance_table_count: u32 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'transactions'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("SQLite metadata query succeeds");
+            assert_eq!(finance_table_count, 1);
+
+            let credit_card_table_count: u32 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'credit_card_details'",
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("SQLite metadata query succeeds");
+            assert_eq!(credit_card_table_count, 1);
         });
     }
 
@@ -240,7 +284,7 @@ mod tests {
         assert_eq!(error.code, ErrorCode::Conflict);
     }
 
-    /// Proves reopening a migrated database is idempotent and preserves a single migration record.
+    /// Proves reopening a migrated database is idempotent and preserves every migration record.
     #[test]
     fn reruns_migrations_idempotently_when_database_is_reopened() {
         let fixture = TemporaryDatabase::new();
@@ -250,13 +294,98 @@ mod tests {
         drop(first);
         let reopened = Database::open(fixture.path(), &key).expect("reopening database succeeds");
 
-        assert_eq!(reopened.schema_version().expect("schema version is readable"), 1);
+        assert_eq!(reopened.schema_version().expect("schema version is readable"), 3);
         reopened.with_connection(|connection| {
             let migration_count: u32 = connection
                 .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
                 .expect("migration count query succeeds");
-            assert_eq!(migration_count, 1);
+            assert_eq!(migration_count, 3);
         });
+    }
+
+    /// Proves card terms belong only to a credit-card account in the same profile scope.
+    #[test]
+    fn permits_credit_card_details_only_for_credit_card_accounts() {
+        let fixture = TemporaryDatabase::new();
+        let key = test_key();
+        let database = Database::create(fixture.path(), &key).expect("database initializes");
+
+        let result = database.in_transaction(|transaction| {
+            let timestamp = "2026-11-23T00:00:00Z";
+            transaction
+                .execute(
+                    "INSERT INTO profile_scopes (id, created_at, updated_at) VALUES (?1, ?2, ?2)",
+                    ("profile-a", timestamp),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO accounts (id, profile_id, name, account_type, currency, opening_minor_units, is_archived, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    ("card-a", "profile-a", "Everyday Card", "credit_card", "USD", 0_i64, 0_i64, timestamp),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO accounts (id, profile_id, name, account_type, currency, opening_minor_units, is_archived, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    ("checking-a", "profile-a", "Checking", "checking", "USD", 0_i64, 0_i64, timestamp),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO credit_card_details (profile_id, account_id, credit_limit_minor_units, statement_closing_day, payment_due_day, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                    ("profile-a", "card-a", 500_000_i64, 15_i64, 10_i64, timestamp),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+
+            let non_card_insert = transaction.execute(
+                "INSERT INTO credit_card_details (profile_id, account_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
+                ("profile-a", "checking-a", timestamp),
+            );
+            assert!(non_card_insert.is_err());
+
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+    }
+
+    /// Proves the finance schema rejects records that cross an authenticated profile boundary.
+    #[test]
+    fn rejects_cross_profile_finance_references() {
+        let fixture = TemporaryDatabase::new();
+        let key = test_key();
+        let database = Database::create(fixture.path(), &key).expect("database initializes");
+
+        let result = database.in_transaction(|transaction| {
+            transaction
+                .execute(
+                    "INSERT INTO profile_scopes (id, created_at, updated_at) VALUES (?1, ?2, ?2)",
+                    ("profile-a", "2026-11-23T00:00:00Z"),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO profile_scopes (id, created_at, updated_at) VALUES (?1, ?2, ?2)",
+                    ("profile-b", "2026-11-23T00:00:00Z"),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+            transaction
+                .execute(
+                    "INSERT INTO accounts (id, profile_id, name, account_type, currency, opening_minor_units, is_archived, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                    ("account-a", "profile-a", "Cash", "cash", "USD", 0_i64, 0_i64, "2026-11-23T00:00:00Z"),
+                )
+                .map_err(|_| ApplicationError::internal())?;
+
+            let cross_profile_insert = transaction.execute(
+                "INSERT INTO transactions (id, profile_id, account_id, occurred_on, entry_type, minor_units, currency, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                ("transaction-b", "profile-b", "account-a", "2026-11-23", "expense", -100_i64, "USD", "2026-11-23T00:00:00Z"),
+            );
+            assert!(cross_profile_insert.is_err());
+
+            Ok(())
+        });
+
+        assert!(result.is_ok());
     }
 
     /// Proves the connection setup enables foreign-key enforcement for all future repositories.

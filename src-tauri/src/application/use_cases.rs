@@ -2,8 +2,8 @@
 
 use crate::application::ApplicationError;
 use crate::application::contracts::{
-    AccountDto, AllocationDto, BackupDto, BudgetDto, CategoryDto, ProfileSummaryDto,
-    SessionStatusDto, TransactionDto,
+    AccountDto, AllocationDto, BackupDto, BudgetAllocationDto, BudgetDto, CategoryDto,
+    ProfileSummaryDto, SessionStatusDto, TransactionDto, TransactionHistoryPageDto, TransferDto,
 };
 use crate::domain::{
     AccountId, AllocationId, BackupId, BudgetId, CategoryId, ProfileScope, TransactionId,
@@ -42,6 +42,8 @@ pub trait ProfileService {
 
 /// Defines budget operations that will be implemented after secure sessions exist.
 pub trait BudgetService {
+    /// Lists budgets available in the authenticated profile, including archived history.
+    fn list(&self, scope: &ProfileScope) -> Result<Vec<BudgetDto>, ApplicationError>;
     /// Creates one budget within the authenticated profile scope.
     fn create(
         &self,
@@ -53,8 +55,30 @@ pub trait BudgetService {
     fn archive(&self, scope: &ProfileScope, budget_id: &BudgetId) -> Result<(), ApplicationError>;
 }
 
+/// Defines budget-period planning operations independent of command and SQL adapters.
+pub trait BudgetAllocationService {
+    /// Lists the profile's planned category amounts in deterministic period order.
+    fn list(&self, scope: &ProfileScope) -> Result<Vec<BudgetAllocationDto>, ApplicationError>;
+
+    /// Creates or replaces a unique budget/category/period plan.
+    fn upsert(
+        &self,
+        scope: &ProfileScope,
+        request: UpsertBudgetAllocationRequest,
+    ) -> Result<BudgetAllocationDto, ApplicationError>;
+
+    /// Removes an unused planning amount without affecting ledger history.
+    fn remove(
+        &self,
+        scope: &ProfileScope,
+        allocation_id: &AllocationId,
+    ) -> Result<(), ApplicationError>;
+}
+
 /// Defines category operations that will be implemented after secure sessions exist.
 pub trait CategoryService {
+    /// Lists categories in their deterministic display order.
+    fn list(&self, scope: &ProfileScope) -> Result<Vec<CategoryDto>, ApplicationError>;
     /// Creates one category within the authenticated profile scope.
     fn create(
         &self,
@@ -72,6 +96,8 @@ pub trait CategoryService {
 
 /// Defines account operations that will be implemented after secure sessions exist.
 pub trait AccountService {
+    /// Lists accounts in the authenticated profile, including archived history.
+    fn list(&self, scope: &ProfileScope) -> Result<Vec<AccountDto>, ApplicationError>;
     /// Creates one account within the authenticated profile scope.
     fn create(
         &self,
@@ -86,6 +112,13 @@ pub trait AccountService {
 
 /// Defines ledger operations that will be implemented after secure sessions exist.
 pub trait TransactionService {
+    /// Lists one deterministic profile-scoped page of immutable ledger history.
+    fn list(
+        &self,
+        scope: &ProfileScope,
+        request: TransactionHistoryRequest,
+    ) -> Result<TransactionHistoryPageDto, ApplicationError>;
+
     /// Records a normalized income or expense entry in the authenticated profile scope.
     fn create(
         &self,
@@ -98,13 +131,20 @@ pub trait TransactionService {
         &self,
         scope: &ProfileScope,
         request: CreateTransferRequest,
-    ) -> Result<(TransactionDto, TransactionDto), ApplicationError>;
+    ) -> Result<TransferDto, ApplicationError>;
 
     /// Reverses an applicable entry without silently rewriting financial history.
     fn reverse(
         &self,
         scope: &ProfileScope,
         transaction_id: &TransactionId,
+    ) -> Result<TransactionDto, ApplicationError>;
+
+    /// Records an immutable delta that changes an eligible entry's amount, classification, or display text.
+    fn adjust(
+        &self,
+        scope: &ProfileScope,
+        request: AdjustTransactionRequest,
     ) -> Result<TransactionDto, ApplicationError>;
 }
 
@@ -185,14 +225,90 @@ pub struct CreateAccountRequest {
 pub struct CreateTransactionRequest {
     /// Holds the affected account identifier.
     pub account_id: String,
+    /// Holds the optional budget identifier associated with the entry.
+    pub budget_id: Option<String>,
     /// Holds the optional budget category identifier.
     pub category_id: Option<String>,
+    /// Identifies whether the entry is income or an expense.
+    pub entry_type: String,
     /// Holds the exact signed amount in minor units.
     pub minor_units: i64,
     /// Holds the accompanying ISO-style currency code.
     pub currency: String,
     /// Holds the canonical local transaction date.
     pub occurred_on: String,
+    /// Holds an optional counterparty name.
+    pub payee: Option<String>,
+    /// Holds an optional short description.
+    pub description: Option<String>,
+    /// Holds optional long-form notes.
+    pub notes: Option<String>,
+    /// Holds category splits that must total the transaction amount exactly.
+    pub allocations: Vec<TransactionAllocationRequest>,
+}
+
+/// Holds the optional filters and bounded pagination used to read transaction history.
+pub struct TransactionHistoryRequest {
+    /// Holds an inclusive canonical local start date.
+    pub starts_on: Option<String>,
+    /// Holds an inclusive canonical local end date.
+    pub ends_on: Option<String>,
+    /// Restricts history to an account owned by the authenticated profile.
+    pub account_id: Option<String>,
+    /// Restricts history to a direct category or category split.
+    pub category_id: Option<String>,
+    /// Restricts history to one reviewed ledger entry type.
+    pub entry_type: Option<String>,
+    /// Holds optional payee, description, or note text to search case-insensitively.
+    pub search: Option<String>,
+    /// Holds the zero-based page number.
+    pub page: u32,
+    /// Holds the requested page size before repository bounds are applied.
+    pub page_size: u32,
+}
+
+/// Holds one exact category portion of a new immutable transaction.
+pub struct TransactionAllocationRequest {
+    /// Holds the category receiving this portion of the transaction.
+    pub category_id: String,
+    /// Holds the signed portion in the same direction as the transaction.
+    pub minor_units: i64,
+}
+
+/// Holds replacement values for an immutable ledger adjustment while retaining its original fact.
+pub struct AdjustTransactionRequest {
+    /// Identifies the original income or expense entry to adjust.
+    pub transaction_id: String,
+    /// Holds the corrected signed total in the original entry's currency.
+    pub adjusted_minor_units: i64,
+    /// Holds the corrected direct category when the entry is not split.
+    pub category_id: Option<String>,
+    /// Holds the corrected optional counterparty text.
+    pub payee: Option<String>,
+    /// Holds the corrected optional short description.
+    pub description: Option<String>,
+    /// Holds the corrected optional long-form notes.
+    pub notes: Option<String>,
+    /// Holds corrected category splits that must total the corrected amount exactly.
+    pub allocations: Vec<TransactionAllocationRequest>,
+    /// Explains the immutable audit correction without exposing internal diagnostics.
+    pub reason: String,
+}
+
+/// Holds the fields required to create or replace one period/category budget plan.
+pub struct UpsertBudgetAllocationRequest {
+    /// Holds the affected budget identifier.
+    pub budget_id: String,
+    /// Holds the planned category identifier.
+    pub category_id: String,
+    /// Holds the inclusive start of the planned period.
+    pub period_starts_on: String,
+    /// Holds the inclusive end of the planned period.
+    pub period_ends_on: String,
+    /// Holds the signed planned amount in exact minor units.
+    pub planned_minor_units: i64,
+    /// Holds optional supporting text for the plan.
+    pub notes: Option<String>,
 }
 
 /// Holds the user-entered fields required to record a transfer atomically.

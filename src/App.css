@@ -96,10 +96,79 @@ input {
   font: inherit;
 }
 
+select {
+  width: 100%;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid #90a49b;
+  border-radius: 0.5rem;
+  background: #ffffff;
+  color: inherit;
+  font: inherit;
+}
+
 input:focus-visible,
+select:focus-visible,
 button:focus-visible {
   outline: 3px solid #d6a72e;
   outline-offset: 2px;
+}
+
+.finance-workspace {
+  width: min(100%, 72rem);
+  display: grid;
+  gap: 1.5rem;
+}
+
+.workspace-header,
+.workspace-actions,
+.record-list li,
+.record-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.workspace-header,
+.record-list li {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.workspace-actions button,
+.record-actions button {
+  margin-top: 0;
+}
+
+.finance-section {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid #c8d8d1;
+  border-radius: 0.8rem;
+  background: #ffffff;
+}
+
+.finance-section h2 {
+  margin: 0;
+}
+
+.record-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.record-list li {
+  padding-top: 0.65rem;
+  border-top: 1px solid #dce7e2;
+}
+
+.danger-button {
+  background: #9b3434;
+}
+.danger-button:hover:not(:disabled) {
+  background: #762424;
 }
 
 button {
@@ -175,6 +244,18 @@ button:disabled {
   input {
     border-color: #6f8a80;
     background: #111a17;
+  }
+
+  select {
+    border-color: #6f8a80;
+    background: #111a17;
+  }
+  .finance-section {
+    border-color: #3b524a;
+    background: #1b2824;
+  }
+  .record-list li {
+    border-color: #3b524a;
   }
 
   .recovery-notice {

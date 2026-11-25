@@ -10,12 +10,26 @@ pub(super) struct Migration {
     pub(super) sql: &'static str,
 }
 
-/// Lists every released bootstrap migration in the only order in which they may run.
-const MIGRATIONS: [Migration; 1] = [Migration {
-    version: 1,
-    name: "bootstrap_schema",
-    sql: include_str!("migrations/0001_bootstrap.sql"),
-}];
+/// Lists every released migration in the only order in which they may run.
+const MIGRATIONS: [Migration; 3] = [
+    Migration {
+        version: 1,
+        name: "bootstrap_schema",
+        sql: include_str!("migrations/0001_bootstrap.sql"),
+    },
+    // Establishes the protected ledger shape before repositories or commands write finance data.
+    Migration {
+        version: 2,
+        name: "core_finance_schema",
+        sql: include_str!("migrations/0002_core_finance_schema.sql"),
+    },
+    // Adds optional card terms without creating a second balance or transaction ledger.
+    Migration {
+        version: 3,
+        name: "credit_card_details",
+        sql: include_str!("migrations/0003_credit_card_details.sql"),
+    },
+];
 
 /// Reports the migration state after a successful migration run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,7 +145,7 @@ fn apply_migration(
 
 #[cfg(test)]
 mod tests {
-    use super::{Migration, run_with_migrations};
+    use super::{MIGRATIONS, Migration, run_with_migrations};
     use rusqlite::Connection;
 
     /// Proves that a failed migration leaves neither its table nor the tracking ledger behind.
@@ -155,5 +169,28 @@ mod tests {
             )
             .expect("SQLite metadata query succeeds");
         assert_eq!(table_count, 0);
+    }
+
+    /// Proves every released schema prefix is a readable fixture and upgrades transactionally.
+    #[test]
+    fn migrates_each_released_schema_fixture_to_the_current_version() {
+        for prefix_length in 1..=MIGRATIONS.len() {
+            let mut connection =
+                Connection::open_in_memory().expect("migration fixture database opens");
+            let report = run_with_migrations(&mut connection, &MIGRATIONS[..prefix_length])
+                .expect("released migration prefix applies");
+            assert_eq!(report.schema_version, prefix_length as u32);
+            assert_eq!(report.applied_count, prefix_length as u32);
+
+            let applied_count: u32 = connection
+                .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
+                .expect("migration fixture ledger is readable");
+            assert_eq!(applied_count, prefix_length as u32);
+
+            let upgraded = run_with_migrations(&mut connection, &MIGRATIONS)
+                .expect("migration fixture upgrades");
+            assert_eq!(upgraded.schema_version, MIGRATIONS.len() as u32);
+            assert_eq!(upgraded.applied_count, (MIGRATIONS.len() - prefix_length) as u32);
+        }
     }
 }

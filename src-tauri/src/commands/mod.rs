@@ -1,5 +1,7 @@
 //! Tauri-boundary types. Commands are added only when a reviewed use case exists.
 
+pub mod backup;
+pub mod finance;
 pub mod profile;
 
 use crate::application::ApplicationError;

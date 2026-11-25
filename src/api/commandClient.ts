@@ -1,9 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ApiErrorPayload,
+  AccountDto,
+  AccountInput,
+  AccountUpdateInput,
+  BackupDto,
+  BudgetAllocationDto,
+  BudgetAllocationInput,
+  BudgetDto,
+  BudgetSummaryDto,
+  BudgetSummaryInput,
+  BudgetInput,
+  BudgetUpdateInput,
+  CategoryDto,
+  CategoryInput,
+  CategoryUpdateInput,
   CreateProfileInput,
+  FinanceSummaryDto,
   ProfileSummary,
   SessionStatus,
+  TransactionDto,
+  TransactionAdjustmentInput,
+  TransactionHistoryInput,
+  TransactionHistoryPageDto,
+  RestoreBackupInput,
+  TransferDto,
+  TransferInput,
+  TransactionInput,
   UnlockProfileInput,
 } from "./contracts";
 
@@ -42,6 +65,114 @@ export class FinanceCommandClient {
   /** Locks any active session before selecting another profile for unlock. */
   async switchProfile(profileId: string): Promise<SessionStatus> {
     return this.invokeCommand<SessionStatus>("switch_profile", { profileId });
+  }
+
+  /** Lists the active profile's protected budgets. */
+  async listBudgets(): Promise<BudgetDto[]> {
+    return this.invokeCommand<BudgetDto[]>("list_budgets");
+  }
+  /** Creates a protected budget. */
+  async createBudget(request: BudgetInput): Promise<BudgetDto> {
+    return this.invokeCommand<BudgetDto>("create_budget", { request });
+  }
+  /** Updates a protected budget. */
+  async updateBudget(request: BudgetUpdateInput): Promise<BudgetDto> {
+    return this.invokeCommand<BudgetDto>("update_budget", { request });
+  }
+  /** Archives a protected budget. */
+  async archiveBudget(id: string): Promise<void> {
+    await this.invokeCommand<void>("archive_budget", { id });
+  }
+  /** Lists protected planned category amounts for all active-profile budgets. */
+  async listBudgetAllocations(): Promise<BudgetAllocationDto[]> {
+    return this.invokeCommand<BudgetAllocationDto[]>("list_budget_allocations");
+  }
+  /** Creates or replaces one protected budget/category/period plan. */
+  async upsertBudgetAllocation(request: BudgetAllocationInput): Promise<BudgetAllocationDto> {
+    return this.invokeCommand<BudgetAllocationDto>("upsert_budget_allocation", { request });
+  }
+  /** Removes one protected planning record without modifying ledger entries. */
+  async removeBudgetAllocation(id: string): Promise<void> {
+    await this.invokeCommand<void>("remove_budget_allocation", { id });
+  }
+
+  /** Lists the active profile's protected categories. */
+  async listCategories(): Promise<CategoryDto[]> {
+    return this.invokeCommand<CategoryDto[]>("list_categories");
+  }
+  /** Creates a protected category. */
+  async createCategory(request: CategoryInput): Promise<CategoryDto> {
+    return this.invokeCommand<CategoryDto>("create_category", { request });
+  }
+  /** Updates a protected category. */
+  async updateCategory(request: CategoryUpdateInput): Promise<CategoryDto> {
+    return this.invokeCommand<CategoryDto>("update_category", { request });
+  }
+  /** Archives a protected category. */
+  async archiveCategory(id: string): Promise<void> {
+    await this.invokeCommand<void>("archive_category", { id });
+  }
+
+  /** Lists the active profile's protected accounts. */
+  async listAccounts(): Promise<AccountDto[]> {
+    return this.invokeCommand<AccountDto[]>("list_accounts");
+  }
+  /** Creates a protected account. */
+  async createAccount(request: AccountInput): Promise<AccountDto> {
+    return this.invokeCommand<AccountDto>("create_account", { request });
+  }
+  /** Updates a protected account. */
+  async updateAccount(request: AccountUpdateInput): Promise<AccountDto> {
+    return this.invokeCommand<AccountDto>("update_account", { request });
+  }
+  /** Archives a protected account. */
+  async archiveAccount(id: string): Promise<void> {
+    await this.invokeCommand<void>("archive_account", { id });
+  }
+
+  /** Reads Rust-derived balances and totals without retaining a frontend calculation engine. */
+  async getFinanceSummary(): Promise<FinanceSummaryDto> {
+    return this.invokeCommand<FinanceSummaryDto>("get_finance_summary");
+  }
+
+  /** Reads Rust-derived results for one selected inclusive budget period. */
+  async getBudgetSummary(request: BudgetSummaryInput): Promise<BudgetSummaryDto> {
+    return this.invokeCommand<BudgetSummaryDto>("get_budget_summary", { request });
+  }
+
+  /** Records one protected income or expense entry in the active profile. */
+  async createTransaction(request: TransactionInput): Promise<TransactionDto> {
+    return this.invokeCommand<TransactionDto>("create_transaction", { request });
+  }
+
+  /** Records two linked transfer entries in the active protected profile. */
+  async createTransfer(request: TransferInput): Promise<TransferDto> {
+    return this.invokeCommand<TransferDto>("create_transfer", { request });
+  }
+
+  /** Lists one filtered deterministic page from the protected immutable ledger. */
+  async listTransactions(request: TransactionHistoryInput): Promise<TransactionHistoryPageDto> {
+    return this.invokeCommand<TransactionHistoryPageDto>("list_transactions", { request });
+  }
+
+  /** Creates an immutable equal-and-opposite correction for an eligible ledger entry. */
+  async reverseTransaction(id: string): Promise<TransactionDto> {
+    return this.invokeCommand<TransactionDto>("reverse_transaction", { id });
+  }
+
+  /** Records an immutable delta for an eligible ledger entry; no UI workflow invokes this in Phase 3. */
+  async adjustTransaction(request: TransactionAdjustmentInput): Promise<TransactionDto> {
+    return this.invokeCommand<TransactionDto>("adjust_transaction", { request });
+  }
+
+  /** Creates an encrypted backup for the active profile without exposing package bytes or paths. */
+  async exportBackup(): Promise<BackupDto> {
+    return this.invokeCommand<BackupDto>("export_backup");
+  }
+
+  /** Restores an application-owned encrypted package after an explicit policy selection. */
+  async restoreBackup(request: RestoreBackupInput): Promise<void> {
+    return this.invokeCommand<void>("restore_backup", { request });
   }
 
   /** Converts unknown Tauri failures into the reviewed frontend error shape. */
