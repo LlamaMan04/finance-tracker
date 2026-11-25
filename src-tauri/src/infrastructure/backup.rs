@@ -217,7 +217,7 @@ mod tests {
     use crate::domain::{ProfileId, ProfileScope};
     use crate::infrastructure::database::Database;
     use crate::infrastructure::test_support::TemporaryDatabase;
-    use crate::ports::security::KeyDerivationPort;
+    use crate::ports::security::{EncryptionMetadata, KeyDerivationPort};
     use crate::security::Argon2idKeyDeriver;
     use std::fs;
 
@@ -369,5 +369,67 @@ mod tests {
                 .code,
             ErrorCode::Backup
         );
+    }
+
+    /// Proves the restore boundary rejects every envelope failure before releasing database bytes.
+    #[test]
+    fn rejects_wrong_key_wrong_profile_malformed_and_incompatible_packages() {
+        let (_database_fixture, database, key, metadata) = fixture();
+        let backup_directory = tempfile::tempdir().expect("backup directory creates");
+        let scope = ProfileScope::new(ProfileId::parse("profile-a").unwrap());
+        let exported = export(&database, &key, &scope, &metadata, backup_directory.path())
+            .expect("backup exports");
+        let path = backup_directory.path().join(format!("{}.ftbackup", exported.id));
+        let original = fs::read(&path).expect("package reads");
+        let wrong_key = Argon2idKeyDeriver
+            .derive_database_key(b"a different passphrase", &metadata)
+            .expect("wrong test key derives");
+
+        assert_eq!(
+            decrypt_for_restore(
+                backup_directory.path(),
+                &exported.id,
+                &scope,
+                &wrong_key,
+                &metadata
+            )
+            .expect_err("wrong key is rejected")
+            .code,
+            ErrorCode::Backup
+        );
+        assert_eq!(
+            decrypt_for_restore(
+                backup_directory.path(),
+                &exported.id,
+                &ProfileScope::new(ProfileId::parse("profile-b").unwrap()),
+                &key,
+                &metadata,
+            )
+            .expect_err("wrong profile is rejected")
+            .code,
+            ErrorCode::Backup
+        );
+
+        fs::write(&path, &original[..original.len() - 1]).expect("truncated package writes");
+        assert_eq!(
+            decrypt_for_restore(backup_directory.path(), &exported.id, &scope, &key, &metadata)
+                .expect_err("truncated package is rejected")
+                .code,
+            ErrorCode::Backup
+        );
+
+        let mut incompatible = original;
+        incompatible[4..8].copy_from_slice(&(FORMAT_VERSION + 1).to_le_bytes());
+        fs::write(&path, incompatible).expect("incompatible package writes");
+        assert_eq!(
+            decrypt_for_restore(backup_directory.path(), &exported.id, &scope, &key, &metadata)
+                .expect_err("incompatible package is rejected")
+                .code,
+            ErrorCode::Backup
+        );
+
+        // Keep this import explicit in the fixture contract: the package metadata is the exact
+        // authenticated value, not a caller-controlled replacement.
+        let _: EncryptionMetadata = metadata;
     }
 }

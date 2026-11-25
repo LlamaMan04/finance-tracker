@@ -145,7 +145,7 @@ fn apply_migration(
 
 #[cfg(test)]
 mod tests {
-    use super::{Migration, run_with_migrations};
+    use super::{MIGRATIONS, Migration, run_with_migrations};
     use rusqlite::Connection;
 
     /// Proves that a failed migration leaves neither its table nor the tracking ledger behind.
@@ -169,5 +169,28 @@ mod tests {
             )
             .expect("SQLite metadata query succeeds");
         assert_eq!(table_count, 0);
+    }
+
+    /// Proves every released schema prefix is a readable fixture and upgrades transactionally.
+    #[test]
+    fn migrates_each_released_schema_fixture_to_the_current_version() {
+        for prefix_length in 1..=MIGRATIONS.len() {
+            let mut connection =
+                Connection::open_in_memory().expect("migration fixture database opens");
+            let report = run_with_migrations(&mut connection, &MIGRATIONS[..prefix_length])
+                .expect("released migration prefix applies");
+            assert_eq!(report.schema_version, prefix_length as u32);
+            assert_eq!(report.applied_count, prefix_length as u32);
+
+            let applied_count: u32 = connection
+                .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
+                .expect("migration fixture ledger is readable");
+            assert_eq!(applied_count, prefix_length as u32);
+
+            let upgraded = run_with_migrations(&mut connection, &MIGRATIONS)
+                .expect("migration fixture upgrades");
+            assert_eq!(upgraded.schema_version, MIGRATIONS.len() as u32);
+            assert_eq!(upgraded.applied_count, (MIGRATIONS.len() - prefix_length) as u32);
+        }
     }
 }

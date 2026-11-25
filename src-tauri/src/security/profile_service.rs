@@ -744,6 +744,22 @@ mod tests {
         assert_eq!(error.code, ErrorCode::Locked);
     }
 
+    /// Proves restore authorization is enforced before backup lookup while the session is locked.
+    #[test]
+    fn rejects_backup_restore_while_locked() {
+        let directory = tempfile::tempdir().expect("temporary profile directory is available");
+        let service = service_for(&directory);
+
+        let error = service
+            .restore_backup(
+                BackupId::parse("backup-01").expect("fixture ID is valid"),
+                RestorePolicy::Replace,
+            )
+            .expect_err("locked restore is rejected");
+
+        assert_eq!(error.code, ErrorCode::Locked);
+    }
+
     /// Proves a replace restore returns the active profile to the exported protected snapshot.
     #[test]
     fn restores_a_validated_backup_without_exposing_database_contents() {
@@ -860,6 +876,73 @@ mod tests {
             })
             .expect("active protected data remains available");
         assert_eq!(active_value, "active");
+    }
+
+    /// Proves malformed and incompatible packages fail before the active database is touched.
+    #[test]
+    fn rejects_malformed_and_incompatible_restore_without_mutation() {
+        for incompatible in [false, true] {
+            let directory = tempfile::tempdir().expect("temporary profile directory is available");
+            let service = service_for(&directory);
+            service
+                .create_profile(create_request("home", b"home passphrase"))
+                .expect("profile is created");
+            service
+                .with_active_profile(|_, database| {
+                    database.in_transaction(|transaction| {
+                        transaction
+                            .execute(
+                                "INSERT INTO application_metadata (key, value) VALUES ('restore-probe', 'active')",
+                                [],
+                            )
+                            .map_err(|_| ApplicationError::internal())?;
+                        Ok(())
+                    })
+                })
+                .expect("active data writes");
+            let exported = service.export_backup().expect("backup exports");
+            let package_path = directory
+                .path()
+                .join("profile-store")
+                .join("profiles")
+                .join("home")
+                .join("backups")
+                .join(format!("{}.ftbackup", exported.id));
+            let mut package = fs::read(&package_path).expect("package reads");
+            if incompatible {
+                package[4..8].copy_from_slice(
+                    &(crate::infrastructure::backup::FORMAT_VERSION + 1).to_le_bytes(),
+                );
+            } else {
+                package.truncate(package.len() - 1);
+            }
+            fs::write(package_path, package).expect("invalid package writes");
+
+            assert_eq!(
+                service
+                    .restore_backup(
+                        BackupId::parse(&exported.id).expect("export ID is valid"),
+                        RestorePolicy::Replace,
+                    )
+                    .expect_err("invalid package is rejected")
+                    .code,
+                ErrorCode::Backup
+            );
+            let active_value = service
+                .with_active_profile(|_, database| {
+                    database.in_transaction(|transaction| {
+                        transaction
+                            .query_row(
+                                "SELECT value FROM application_metadata WHERE key = 'restore-probe'",
+                                [],
+                                |row| row.get::<_, String>(0),
+                            )
+                            .map_err(|_| ApplicationError::internal())
+                    })
+                })
+                .expect("active protected data remains available");
+            assert_eq!(active_value, "active");
+        }
     }
 
     /// Proves the unsupported merge selection fails without mutating the active protected data.
