@@ -5,7 +5,9 @@ use crate::application::contracts::{
     AccountDto, BudgetAllocationDto, BudgetDto, BudgetSummaryDto, CategoryDto, FinanceSummaryDto,
     TransactionDto, TransactionHistoryPageDto, TransferDto,
 };
-use crate::application::use_cases::{AdjustTransactionRequest, TransactionAllocationRequest};
+use crate::application::use_cases::{
+    AdjustTransactionRequest, TransactionAllocationRequest, TransactionHistoryRequest,
+};
 use crate::commands::safe_error;
 use crate::infrastructure::budget_allocation_repository::BudgetAllocationRepository;
 use crate::infrastructure::calculation_repository::CalculationRepository;
@@ -499,14 +501,16 @@ pub fn list_transactions(
             FinanceRepository::list_transactions(
                 database,
                 scope,
-                request.starts_on.as_deref(),
-                request.ends_on.as_deref(),
-                request.account_id.as_deref(),
-                request.category_id.as_deref(),
-                request.entry_type.as_deref(),
-                request.search.as_deref(),
-                request.page,
-                request.page_size,
+                TransactionHistoryRequest {
+                    starts_on: request.starts_on,
+                    ends_on: request.ends_on,
+                    account_id: request.account_id,
+                    category_id: request.category_id,
+                    entry_type: request.entry_type,
+                    search: request.search,
+                    page: request.page,
+                    page_size: request.page_size,
+                },
             )
         })
         .map_err(safe_error)

@@ -8,7 +8,7 @@ use super::validation::{
 };
 use crate::application::ApplicationError;
 use crate::application::contracts::{AllocationDto, TransactionDto, TransactionHistoryPageDto};
-use crate::application::use_cases::TransactionAllocationRequest;
+use crate::application::use_cases::{TransactionAllocationRequest, TransactionHistoryRequest};
 use crate::domain::{AccountId, BudgetId, CategoryId, CurrencyCode, LocalDate, ProfileScope};
 use crate::infrastructure::database::Database;
 use rusqlite::{params, types::Value};
@@ -74,17 +74,10 @@ impl FinanceRepository {
     pub fn list_transactions(
         database: &Database,
         scope: &ProfileScope,
-        starts_on: Option<&str>,
-        ends_on: Option<&str>,
-        account_id: Option<&str>,
-        category_id: Option<&str>,
-        entry_type: Option<&str>,
-        search: Option<&str>,
-        page: u32,
-        page_size: u32,
+        request: TransactionHistoryRequest,
     ) -> Result<TransactionHistoryPageDto, ApplicationError> {
-        let parsed_starts_on = starts_on.map(LocalDate::parse).transpose()?;
-        let parsed_ends_on = ends_on.map(LocalDate::parse).transpose()?;
+        let parsed_starts_on = request.starts_on.as_deref().map(LocalDate::parse).transpose()?;
+        let parsed_ends_on = request.ends_on.as_deref().map(LocalDate::parse).transpose()?;
         if parsed_starts_on
             .as_ref()
             .zip(parsed_ends_on.as_ref())
@@ -92,18 +85,19 @@ impl FinanceRepository {
         {
             return Err(ApplicationError::validation());
         }
-        let account_id = account_id.map(AccountId::parse).transpose()?;
-        let category_id = category_id.map(CategoryId::parse).transpose()?;
-        let entry_type = entry_type.map(validate_history_entry_type).transpose()?;
-        let search = validate_optional_text(search, 200)?;
+        let account_id = request.account_id.as_deref().map(AccountId::parse).transpose()?;
+        let category_id = request.category_id.as_deref().map(CategoryId::parse).transpose()?;
+        let entry_type =
+            request.entry_type.as_deref().map(validate_history_entry_type).transpose()?;
+        let search = validate_optional_text(request.search.as_deref(), 200)?;
         // Bounds keep a hostile caller from forcing an unbounded protected-database read.
-        let page_size = page_size.clamp(1, 100);
-        let offset = u64::from(page)
+        let page_size = request.page_size.clamp(1, 100);
+        let offset = u64::from(request.page)
             .checked_mul(u64::from(page_size))
             .ok_or_else(ApplicationError::validation)?;
         let offset = i64::try_from(offset).map_err(|_| ApplicationError::validation())?;
         database.in_transaction(|transaction| {
-            let (where_clause, filter_values) = transaction_history_filters(scope, starts_on, ends_on, account_id.as_ref().map(|value| value.as_str()), category_id.as_ref().map(|value| value.as_str()), entry_type, search.as_deref());
+            let (where_clause, filter_values) = transaction_history_filters(scope, request.starts_on.as_deref(), request.ends_on.as_deref(), account_id.as_ref().map(|value| value.as_str()), category_id.as_ref().map(|value| value.as_str()), entry_type, search.as_deref());
             let count_sql = format!("SELECT COUNT(*) FROM transactions t WHERE {where_clause}");
             let total_count: i64 = transaction.query_row(&count_sql, rusqlite::params_from_iter(filter_values.iter()), |row| row.get(0)).map_err(|_| ApplicationError::internal())?;
             let list_sql = format!("SELECT t.id, t.account_id, t.budget_id, t.category_id, t.minor_units, t.currency, t.occurred_on, t.entry_type, t.payee, t.description, t.notes FROM transactions t WHERE {where_clause} ORDER BY t.occurred_on DESC, t.id DESC LIMIT ? OFFSET ?");
@@ -115,7 +109,7 @@ impl FinanceRepository {
             let mut transactions = rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApplicationError::internal())?;
             drop(statement);
             for transaction_dto in &mut transactions { transaction_dto.allocations = load_allocations(transaction, scope, &transaction_dto.id)?; }
-            Ok(TransactionHistoryPageDto { transactions, total_count: u64::try_from(total_count).map_err(|_| ApplicationError::internal())?, page, page_size })
+            Ok(TransactionHistoryPageDto { transactions, total_count: u64::try_from(total_count).map_err(|_| ApplicationError::internal())?, page: request.page, page_size })
         })
     }
 }

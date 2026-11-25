@@ -19,7 +19,7 @@ use crate::security::unlock_throttle::UnlockThrottle;
 use crate::security::{Argon2idKeyDeriver, PlatformCredentialStore};
 use std::fs;
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -318,7 +318,7 @@ fn remove_file_if_present(path: &PathBuf) -> Result<(), ApplicationError> {
 }
 
 /// Creates one sibling path so a restore never accepts a caller-controlled filesystem location.
-fn restore_staging_path(database_path: &PathBuf, suffix: &str) -> PathBuf {
+fn restore_staging_path(database_path: &Path, suffix: &str) -> PathBuf {
     let file_name = database_path.file_name().and_then(|name| name.to_str()).unwrap_or("database");
     database_path.with_file_name(format!(".{file_name}.{suffix}.{}", uuid::Uuid::new_v4()))
 }
@@ -337,7 +337,7 @@ fn write_restore_staging_file(path: &PathBuf, bytes: &[u8]) -> Result<(), Applic
 }
 
 /// Removes only known SQLite sidecars after their owning connection has been closed.
-fn remove_database_sidecars(database_path: &PathBuf) -> Result<(), ApplicationError> {
+fn remove_database_sidecars(database_path: &Path) -> Result<(), ApplicationError> {
     for suffix in ["-wal", "-shm"] {
         let mut sidecar_path = database_path.as_os_str().to_owned();
         sidecar_path.push(suffix);

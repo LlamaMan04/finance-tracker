@@ -1,7 +1,9 @@
 //! Shared repository fixture and focused regression coverage for the split finance modules.
 
 use super::FinanceRepository;
-use crate::application::use_cases::{AdjustTransactionRequest, TransactionAllocationRequest};
+use crate::application::use_cases::{
+    AdjustTransactionRequest, TransactionAllocationRequest, TransactionHistoryRequest,
+};
 use crate::domain::{ProfileId, ProfileScope};
 use crate::infrastructure::test_support::TemporaryDatabase;
 use crate::ports::security::KeyDerivationPort;
@@ -311,27 +313,31 @@ fn lists_filtered_transaction_history_in_deterministic_pages() {
     let filtered = FinanceRepository::list_transactions(
         &database,
         &scope,
-        Some("2026-01-01"),
-        Some("2026-01-31"),
-        Some(&account.id),
-        Some(&dining.id),
-        Some("expense"),
-        Some("cafe"),
-        0,
-        20,
+        TransactionHistoryRequest {
+            starts_on: Some("2026-01-01".to_owned()),
+            ends_on: Some("2026-01-31".to_owned()),
+            account_id: Some(account.id.clone()),
+            category_id: Some(dining.id.clone()),
+            entry_type: Some("expense".to_owned()),
+            search: Some("cafe".to_owned()),
+            page: 0,
+            page_size: 20,
+        },
     )
     .expect("filtered");
     let next = FinanceRepository::list_transactions(
         &database,
         &scope,
-        None,
-        None,
-        Some(&account.id),
-        None,
-        None,
-        None,
-        1,
-        1,
+        TransactionHistoryRequest {
+            starts_on: None,
+            ends_on: None,
+            account_id: Some(account.id.clone()),
+            category_id: None,
+            entry_type: None,
+            search: None,
+            page: 1,
+            page_size: 1,
+        },
     )
     .expect("next");
     assert_eq!(filtered.total_count, 1);
