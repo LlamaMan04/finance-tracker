@@ -84,7 +84,14 @@ export function FinanceWorkspace({
 
   /** Loads all reference data together after the profile becomes authenticated. */
   async function refresh() {
-    const [nextBudgets, nextCategories, nextAccounts, nextBudgetAllocations, nextHistory, nextFinanceSummary] = await Promise.all([
+    const [
+      nextBudgets,
+      nextCategories,
+      nextAccounts,
+      nextBudgetAllocations,
+      nextHistory,
+      nextFinanceSummary,
+    ] = await Promise.all([
       commandClient.listBudgets(),
       commandClient.listCategories(),
       commandClient.listAccounts(),
@@ -212,7 +219,9 @@ export function FinanceWorkspace({
         periodEndsOn: String(values.get("summaryPeriodEndsOn") ?? ""),
       })
       .then(setBudgetSummary)
-      .catch(() => setErrorMessage("The supplied value is invalid or the operation could not be completed."));
+      .catch(() =>
+        setErrorMessage("The supplied value is invalid or the operation could not be completed."),
+      );
   }
 
   /** Records one signed income or expense fact and displays only Rust's normalized response. */
@@ -292,7 +301,9 @@ export function FinanceWorkspace({
 
   /** Creates a compensating ledger fact only after the user confirms the permanent audit action. */
   function confirmReverse(transaction: TransactionDto) {
-    if (!window.confirm("Reverse this entry? This adds an immutable equal-and-opposite correction.")) {
+    if (
+      !window.confirm("Reverse this entry? This adds an immutable equal-and-opposite correction.")
+    ) {
       return;
     }
     void mutate(() => commandClient.reverseTransaction(transaction.id));
@@ -307,11 +318,7 @@ export function FinanceWorkspace({
   }
 
   /** Updates one transient split field while Rust remains the authoritative validator. */
-  function updateAllocationRow(
-    id: string,
-    field: "categoryId" | "minorUnits",
-    value: string,
-  ) {
+  function updateAllocationRow(id: string, field: "categoryId" | "minorUnits", value: string) {
     setAllocationRows((rows) =>
       rows.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
     );
@@ -409,7 +416,8 @@ export function FinanceWorkspace({
                 {financeSummary.currencyTotals.map((totals) => (
                   <li key={totals.currency}>
                     <span>
-                      {totals.currency} · income {totals.incomeMinorUnits} · expenses {totals.expenseMinorUnits}
+                      {totals.currency} · income {totals.incomeMinorUnits} · expenses{" "}
+                      {totals.expenseMinorUnits}
                     </span>
                   </li>
                 ))}
@@ -508,12 +516,7 @@ export function FinanceWorkspace({
             type="date"
           />
           <label htmlFor="allocation-period-end">Period ends</label>
-          <input
-            id="allocation-period-end"
-            name="allocationPeriodEndsOn"
-            required
-            type="date"
-          />
+          <input id="allocation-period-end" name="allocationPeriodEndsOn" required type="date" />
           <label htmlFor="allocation-planned-minor-units">Planned amount (minor units)</label>
           <input
             id="allocation-planned-minor-units"
@@ -650,8 +653,7 @@ export function FinanceWorkspace({
                 <option value="">No category</option>
                 {categories
                   .filter(
-                    (category) =>
-                      !category.isArchived && category.categoryKind === transactionKind,
+                    (category) => !category.isArchived && category.categoryKind === transactionKind,
                   )
                   .map((category) => (
                     <option key={category.id} value={category.id}>
@@ -664,13 +666,17 @@ export function FinanceWorkspace({
           {isSplitTransaction && (
             <fieldset>
               <legend>Category splits</legend>
-              <p>Each amount must use the transaction sign, and all splits must equal its amount.</p>
+              <p>
+                Each amount must use the transaction sign, and all splits must equal its amount.
+              </p>
               {allocationRows.map((row, index) => (
                 <div key={row.id}>
                   <label htmlFor={`split-category-${row.id}`}>Split {index + 1} category</label>
                   <select
                     id={`split-category-${row.id}`}
-                    onChange={(event) => updateAllocationRow(row.id, "categoryId", event.currentTarget.value)}
+                    onChange={(event) =>
+                      updateAllocationRow(row.id, "categoryId", event.currentTarget.value)
+                    }
                     required
                     value={row.categoryId}
                   >
@@ -686,15 +692,23 @@ export function FinanceWorkspace({
                         </option>
                       ))}
                   </select>
-                  <label htmlFor={`split-amount-${row.id}`}>Split {index + 1} amount (minor units)</label>
+                  <label htmlFor={`split-amount-${row.id}`}>
+                    Split {index + 1} amount (minor units)
+                  </label>
                   <input
                     id={`split-amount-${row.id}`}
                     inputMode="numeric"
-                    onChange={(event) => updateAllocationRow(row.id, "minorUnits", event.currentTarget.value)}
+                    onChange={(event) =>
+                      updateAllocationRow(row.id, "minorUnits", event.currentTarget.value)
+                    }
                     required
                     value={row.minorUnits}
                   />
-                  <button disabled={disabled} onClick={() => removeAllocationRow(row.id)} type="button">
+                  <button
+                    disabled={disabled}
+                    onClick={() => removeAllocationRow(row.id)}
+                    type="button"
+                  >
                     Remove split {index + 1}
                   </button>
                 </div>
@@ -753,7 +767,9 @@ export function FinanceWorkspace({
       </section>
       <section aria-labelledby="transfers-heading" className="finance-section">
         <h2 id="transfers-heading">Transfer between accounts</h2>
-        <p>Enter a positive amount. Transfers do not count as income, expenses, or budget activity.</p>
+        <p>
+          Enter a positive amount. Transfers do not count as income, expenses, or budget activity.
+        </p>
         <form onSubmit={submitTransfer}>
           <label htmlFor="transfer-source-account">From account</label>
           <select id="transfer-source-account" name="transferSourceAccountId" required>
@@ -793,7 +809,9 @@ export function FinanceWorkspace({
         </form>
         {lastRecordedTransfer !== null && (
           <p aria-live="polite">
-            Transferred {lastRecordedTransfer.destinationTransaction.minorUnits} {lastRecordedTransfer.destinationTransaction.currency} from one account to another on {lastRecordedTransfer.destinationTransaction.occurredOn}.
+            Transferred {lastRecordedTransfer.destinationTransaction.minorUnits}{" "}
+            {lastRecordedTransfer.destinationTransaction.currency} from one account to another on{" "}
+            {lastRecordedTransfer.destinationTransaction.occurredOn}.
           </p>
         )}
       </section>
@@ -807,12 +825,20 @@ export function FinanceWorkspace({
           <label htmlFor="history-account">Account</label>
           <select id="history-account" name="historyAccountId">
             <option value="">All accounts</option>
-            {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
           </select>
           <label htmlFor="history-category">Category</label>
           <select id="history-category" name="historyCategoryId">
             <option value="">All categories</option>
-            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
           </select>
           <label htmlFor="history-entry-type">Type</label>
           <select id="history-entry-type" name="historyEntryType">
@@ -826,7 +852,9 @@ export function FinanceWorkspace({
           <input id="history-search" maxLength={200} name="historySearch" />
           <button disabled={disabled}>Apply history filters</button>
         </form>
-        <p aria-live="polite">{historyTotalCount} matching transaction{historyTotalCount === 1 ? "" : "s"}.</p>
+        <p aria-live="polite">
+          {historyTotalCount} matching transaction{historyTotalCount === 1 ? "" : "s"}.
+        </p>
         <TransactionHistoryList
           accounts={accounts}
           categories={categories}
@@ -840,13 +868,19 @@ export function FinanceWorkspace({
             disabled={disabled || historyRequest.page === 0}
             onClick={() => void loadHistory({ ...historyRequest, page: historyRequest.page - 1 })}
             type="button"
-          >Previous page</button>
+          >
+            Previous page
+          </button>
           <button
             className="secondary-button"
-            disabled={disabled || (historyRequest.page + 1) * historyRequest.pageSize >= historyTotalCount}
+            disabled={
+              disabled || (historyRequest.page + 1) * historyRequest.pageSize >= historyTotalCount
+            }
             onClick={() => void loadHistory({ ...historyRequest, page: historyRequest.page + 1 })}
             type="button"
-          >Next page</button>
+          >
+            Next page
+          </button>
         </div>
       </section>
     </section>
@@ -855,7 +889,11 @@ export function FinanceWorkspace({
 
 /** Renders history with explicit text labels and only permits reversible original ledger facts. */
 function TransactionHistoryList({
-  accounts, categories, disabled, onReverse, transactions,
+  accounts,
+  categories,
+  disabled,
+  onReverse,
+  transactions,
 }: {
   accounts: AccountDto[];
   categories: CategoryDto[];
@@ -864,24 +902,41 @@ function TransactionHistoryList({
   transactions: TransactionDto[];
 }) {
   if (transactions.length === 0) return <p>No transactions match these filters.</p>;
-  return <ul className="record-list">
-    {transactions.map((transaction) => {
-      /** Resolves a readable label without recalculating protected financial data. */
-      const account = accounts.find((candidate) => candidate.id === transaction.accountId);
-      /** Retains useful category context for direct-category transactions. */
-      const category = categories.find((candidate) => candidate.id === transaction.categoryId);
-      return <li key={transaction.id}>
-        <span>
-          {transaction.occurredOn} · {transaction.entryType} · {transaction.minorUnits} {transaction.currency} · {account?.name ?? "Archived or unknown account"}
-          {category ? ` · ${category.name}` : ""}{transaction.payee ? ` · ${transaction.payee}` : ""}
-          {transaction.allocations.length > 0 ? ` · ${transaction.allocations.length} split categories` : ""}
-        </span>
-        {(transaction.entryType === "income" || transaction.entryType === "expense") && (
-          <span className="record-actions"><button className="danger-button" disabled={disabled} onClick={() => onReverse(transaction)} type="button">Reverse</button></span>
-        )}
-      </li>;
-    })}
-  </ul>;
+  return (
+    <ul className="record-list">
+      {transactions.map((transaction) => {
+        /** Resolves a readable label without recalculating protected financial data. */
+        const account = accounts.find((candidate) => candidate.id === transaction.accountId);
+        /** Retains useful category context for direct-category transactions. */
+        const category = categories.find((candidate) => candidate.id === transaction.categoryId);
+        return (
+          <li key={transaction.id}>
+            <span>
+              {transaction.occurredOn} · {transaction.entryType} · {transaction.minorUnits}{" "}
+              {transaction.currency} · {account?.name ?? "Archived or unknown account"}
+              {category ? ` · ${category.name}` : ""}
+              {transaction.payee ? ` · ${transaction.payee}` : ""}
+              {transaction.allocations.length > 0
+                ? ` · ${transaction.allocations.length} split categories`
+                : ""}
+            </span>
+            {(transaction.entryType === "income" || transaction.entryType === "expense") && (
+              <span className="record-actions">
+                <button
+                  className="danger-button"
+                  disabled={disabled}
+                  onClick={() => onReverse(transaction)}
+                  type="button"
+                >
+                  Reverse
+                </button>
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 /** Renders each planned amount with stable text labels rather than a financial calculation. */
@@ -936,7 +991,9 @@ function BudgetSummaryList({ summary }: { summary: BudgetSummaryDto }) {
   return (
     <div aria-live="polite">
       <p>
-        {summary.periodStartsOn} to {summary.periodEndsOn} · planned {summary.plannedMinorUnits} · actual {summary.actualMinorUnits} · remaining {summary.remainingMinorUnits} {summary.currency}.
+        {summary.periodStartsOn} to {summary.periodEndsOn} · planned {summary.plannedMinorUnits} ·
+        actual {summary.actualMinorUnits} · remaining {summary.remainingMinorUnits}{" "}
+        {summary.currency}.
       </p>
       {summary.categories.length === 0 ? (
         <p>No planned or categorized activity matches this exact budget period.</p>
@@ -945,7 +1002,9 @@ function BudgetSummaryList({ summary }: { summary: BudgetSummaryDto }) {
           {summary.categories.map((category) => (
             <li key={category.categoryId}>
               <span>
-                {category.categoryName} · {category.categoryKind} · planned {category.plannedMinorUnits} · actual {category.actualMinorUnits} · remaining {category.remainingMinorUnits}
+                {category.categoryName} · {category.categoryKind} · planned{" "}
+                {category.plannedMinorUnits} · actual {category.actualMinorUnits} · remaining{" "}
+                {category.remainingMinorUnits}
               </span>
             </li>
           ))}
